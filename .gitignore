@@ -1,0 +1,130 @@
+# =============================================================================
+# YTDL-Pro .gitignore
+# Python project – Android Termux
+# Target: public GitHub repository
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Python – bytecode, build artifacts, packaging
+# Compiled files are environment-specific and must never be committed.
+# -----------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+wheels/
+sdist/
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
+.Python
+
+# -----------------------------------------------------------------------------
+# Virtual environments
+# Each developer/device maintains its own isolated environment.
+# -----------------------------------------------------------------------------
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# -----------------------------------------------------------------------------
+# Logs
+# Ignore only the active runtime log; preserve the Logs/ directory itself
+# so the folder structure is visible in the repository.
+# -----------------------------------------------------------------------------
+Logs/latest.log
+
+# -----------------------------------------------------------------------------
+# Environment variables & secrets
+# These files contain credentials and must never reach version control.
+# -----------------------------------------------------------------------------
+.env
+.env.*
+*.pem
+*.key
+secrets.json
+
+# -----------------------------------------------------------------------------
+# Local configuration overrides
+# Developers may create config.local.json to override defaults locally.
+# The committed config files (if any) remain unaffected.
+# -----------------------------------------------------------------------------
+config.local.json
+
+# -----------------------------------------------------------------------------
+# Editors & IDEs
+# Project-agnostic editor state is personal and must not be shared.
+# -----------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# -----------------------------------------------------------------------------
+# Operating system artifacts
+# Generated automatically by macOS, Windows, and Linux file managers.
+# -----------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# -----------------------------------------------------------------------------
+# Temporary files
+# Scratch files produced during development or runtime processing.
+# -----------------------------------------------------------------------------
+*.tmp
+*.temp
+*.bak
+*.orig
+
+# -----------------------------------------------------------------------------
+# yt-dlp download artifacts
+# Partial downloads and raw stream fragments are transient working files.
+# Stray .webm files and numbered fragment chunks are also excluded.
+# -----------------------------------------------------------------------------
+*.part
+*.ytdl
+*.webm
+*.f[0-9]*.mp4
+
+# -----------------------------------------------------------------------------
+# Termux-specific
+# Android Termux stores local terminal configuration in .termux/.
+# This is device-specific and should not be committed.
+# -----------------------------------------------------------------------------
+.termux/
+
+# -----------------------------------------------------------------------------
+# Videos directory
+# Ignore all downloaded video files but keep the directory itself in Git
+# via a .gitkeep placeholder so clones have the correct folder structure.
+# -----------------------------------------------------------------------------
+Videos/*
+!Videos/.gitkeep
+
+# -----------------------------------------------------------------------------
+# Explicitly tracked project files
+# These files are part of the project's runtime state and must be versioned.
+# Negations override any broader rules that might inadvertently match them.
+# -----------------------------------------------------------------------------
+!links.txt
+!history.json
+!metadata.txt
+!failed.txt
+!Videos/.gitkeep
+
+# Core source files are never ignored, but listed here for documentation
+# clarity in case future wildcard rules are added above.
+!README.md
+!requirements.txt
+!main.py
+!downloader.py

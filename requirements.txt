@@ -1,0 +1,9 @@
+# YTDL-Pro – Python dependencies
+# Install: pip install -r requirements.txt
+# Termux:  pip install -r requirements.txt --break-system-packages
+
+# Core downloader
+yt-dlp>=2026.6.9
+
+# Terminal UI
+rich>=13.7.0
