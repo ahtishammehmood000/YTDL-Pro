@@ -34,16 +34,32 @@ from typing import Any, Optional
 _CONFIG_FILE: Path = Path(__file__).parent.resolve() / "config.json"
 
 # ---------------------------------------------------------------------------
+# Android shared storage root.
+# On every Android device with Termux, /storage/emulated/0 is the primary
+# shared storage volume (visible in the Files app and accessible after the
+# user has granted Termux storage permission via `termux-setup-storage`).
+#
+# Path.home() in Termux resolves to /data/data/com.termux/files/home which
+# is private app storage — NOT visible in the Files app or from other apps.
+# ---------------------------------------------------------------------------
+_ANDROID_STORAGE: Path = Path("/storage/emulated/0")
+
+# ---------------------------------------------------------------------------
 # Known download folder presets.
 # These are offered in the folder-picker menu so the user doesn't have to
 # type a path for the two most common destinations.
+#
+# Both point to Android shared storage so downloaded files are immediately
+# visible in the Android Files app, Gallery, and other media apps.
 # ---------------------------------------------------------------------------
 PRESET_FOLDERS: dict[str, Path] = {
-    "Movies": Path.home() / "Movies",
-    "Downloads": Path.home() / "Downloads",
+    "Movies":    _ANDROID_STORAGE / "Movies",
+    "Downloads": _ANDROID_STORAGE / "Download",   # Android uses "Download" (no 's')
 }
 
 # Default folder used when the user has never chosen one.
+# Falls back to the local Videos/ dir so the app works even without storage
+# permission (e.g. on desktop Linux or before termux-setup-storage is run).
 DEFAULT_FOLDER: Path = Path(__file__).parent.resolve() / "Videos"
 
 

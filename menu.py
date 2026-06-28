@@ -36,6 +36,7 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
+import file_browser
 from app_config import DEFAULT_FOLDER, PRESET_FOLDERS, AppConfig
 from downloader import (
     FAILED_FILE,
@@ -141,6 +142,76 @@ def _pause() -> None:
     console.print()
 
 
+def _is_valid_txt_file(path: Optional[Path]) -> bool:
+    """
+    Return True if *path* points at an existing, regular ``.txt`` file.
+
+    Used to check a path already loaded from config.json (``last_links_file``)
+    — unlike :func:`_validate_txt_file`, this takes a ``Path | None`` rather
+    than raw user input, and never returns an error message.
+    """
+    return (
+        path is not None
+        and path.exists()
+        and path.is_file()
+        and path.suffix.lower() == ".txt"
+    )
+
+
+def _validate_txt_file(raw: str) -> tuple:
+    """
+    Validate that *raw* is a path to an existing, regular .txt file.
+
+    Returns (Path, "") on success, or (None, reason_string) on failure.
+
+    Checks performed (in order):
+        1. Path is not empty.
+        2. The resolved path exists on disk.
+        3. It is a regular file, not a directory.
+        4. Its suffix (case-insensitive) is .txt.
+    """
+    if not raw:
+        return None, "Path cannot be empty."
+
+    path = Path(raw).expanduser().resolve()
+
+    if not path.exists():
+        return None, f"File not found: {path}"
+
+    if path.is_dir():
+        return None, f"That is a directory, not a file: {path}"
+
+    if path.suffix.lower() != ".txt":
+        return None, f"Not a .txt file (got \'{path.suffix or 'no extension'}\' ): {path}"
+
+    return path, ""
+
+
+def _prompt_txt_file(prompt_label: str, default: Path) -> Path:
+    """
+    Prompt for a .txt file path, re-asking on every invalid input.
+
+    Parameters
+    ----------
+    prompt_label:
+        Label shown beside the prompt arrow.
+    default:
+        Used when the user presses Enter with no input.
+
+    Returns
+    -------
+    Path
+        A validated, resolved path to an existing .txt file.
+    """
+    while True:
+        raw = _prompt(prompt_label, default=str(default))
+        path, error = _validate_txt_file(raw)
+        if path is not None:
+            return path
+        console.print(f"[bold red]  ✗  {error}[/]")
+        console.print("[dim]     Enter a valid .txt file path, or press Enter to use the default.[/]")
+
+
 # ===========================================================================
 # Folder picker
 # ===========================================================================
@@ -148,43 +219,57 @@ def _pause() -> None:
 
 def pick_folder(cfg: AppConfig) -> Path:
     """
-    Ask the user where to save videos.
+    Show the destination picker and return the chosen folder.
 
-    If ``cfg.last_download_folder`` is already set, that folder is returned
-    immediately without asking – the user can change it via Settings.
+    The picker is **always** displayed so the user consciously selects where
+    each batch lands.  The last-used folder (if any) appears as option 1 so
+    it can be re-selected with a single keystroke.
 
-    Otherwise the folder-picker sub-menu is shown:
+    Menu layout
+    -----------
+    When a folder has been used before::
 
-        1  Last used  (only shown if a folder is stored)
-        2  Movies     (~/ Movies)
-        3  Downloads  (~/ Downloads)
-        4  Custom path
+        1  Last Used  (/storage/emulated/0/Movies)
+        2  Movies     (/storage/emulated/0/Movies)
+        3  Downloads  (/storage/emulated/0/Download)
+        4  Custom path…
 
-    The chosen folder is saved to *cfg* (caller is responsible for
-    calling ``cfg.save()`` afterwards).
+    On first run (no stored folder)::
+
+        1  Movies     (/storage/emulated/0/Movies)
+        2  Downloads  (/storage/emulated/0/Download)
+        3  Custom path…
+
+    Choosing "Custom path…" launches the interactive terminal file
+    browser (see file_browser.py) instead of a raw typed-path prompt.
+
+    The chosen folder is saved into *cfg* and persisted to ``config.json``
+    before this function returns.
 
     Returns
     -------
     Path
         Absolute path to the chosen (and created) directory.
     """
-    # Already have a remembered folder – use it silently.
-    if cfg.last_download_folder is not None:
-        return cfg.last_download_folder
+    console.print()
+    console.print(Rule("[bold cyan]Download Destination[/]"))
+    console.print()
 
-    # Build the menu options dynamically.
-    options: list[tuple[str, Optional[Path]]] = []
+    # Build option list.  "Last Used" is prepended when a folder is stored.
+    options: list[tuple[str, Path | None]] = []
+
+    if cfg.last_download_folder is not None:
+        label = str(cfg.last_download_folder)
+        if len(label) > 52:
+            label = "…" + label[-51:]
+        options.append((f"Last Used  ({label})", cfg.last_download_folder))
 
     for name, path in PRESET_FOLDERS.items():
         options.append((f"{name}  ({path})", path))
 
     options.append(("Custom path…", None))
 
-    # Display picker.
-    console.print()
-    console.print(Rule("[bold cyan]Download Destination[/]"))
-    console.print()
-
+    # Render the table.
     table = Table(box=box.SIMPLE, show_header=False, pad_edge=False)
     table.add_column("  #", style="bold cyan", justify="right", min_width=3)
     table.add_column("  Location", style="white")
@@ -195,29 +280,37 @@ def pick_folder(cfg: AppConfig) -> Path:
     console.print(table)
     console.print()
 
+    # Prompt until a valid choice is made.
+    n = len(options)
     while True:
-        raw = _prompt(f"Choose destination [1–{len(options)}]")
+        raw = _prompt(f"Choose destination [1–{n}]")
         if raw.isdigit():
             idx = int(raw) - 1
-            if 0 <= idx < len(options):
+            if 0 <= idx < n:
                 _, chosen_path = options[idx]
                 break
-        console.print("[yellow]  Invalid choice. Enter a number from the list.[/]")
+        console.print(f"[yellow]  Please enter a number between 1 and {n}.[/]")
 
+    # Handle custom path entry via the interactive file browser (replaces
+    # the old free-typed path prompt — see file_browser.py).
     if chosen_path is None:
-        # Custom path.
-        while True:
-            raw_path = _prompt("Enter full path to save folder")
-            if raw_path:
-                chosen_path = Path(raw_path).expanduser().resolve()
-                break
-            console.print("[yellow]  Path cannot be empty.[/]")
+        browsed = file_browser.select_folder()
+        if browsed is None:
+            # User backed out of the browser without picking anything;
+            # fall back to the existing default rather than leaving the
+            # caller with no folder at all.
+            console.print("[yellow]  No folder selected — keeping the previous default.[/]")
+            chosen_path = cfg.last_download_folder or DEFAULT_FOLDER
+        else:
+            chosen_path = browsed
 
+    # Create the directory and persist the choice.
     chosen_path.mkdir(parents=True, exist_ok=True)
     cfg.last_download_folder = chosen_path
     cfg.save()
+
     console.print(
-        f"\n[green]✔  Folder set to:[/] [cyan]{chosen_path}[/]\n"
+        f"\n[green]✔  Saving to:[/] [cyan]{chosen_path}[/]\n"
         f"   [dim](Change anytime via Settings → option 1)[/]\n"
     )
     return chosen_path
@@ -282,39 +375,60 @@ def action_batch_download(cfg: AppConfig) -> None:
     """
     Menu item 2 – Batch Download (.txt).
 
-    Asks for a .txt file path (Enter → default links.txt), then a folder,
-    and delegates to Downloader.
+    Flow
+    ----
+    1. Use the saved ``last_links_file`` from config.json, if it is set
+       and still points at a valid, existing ``.txt`` file.
+    2. If it is missing, invalid, or has never been set, the user is
+       required to pick one via the interactive file browser — there is
+       **no** silent fallback to the project's internal ``links.txt``.
+    3. Whatever file is selected (saved one re-confirmed, or freshly
+       browsed) is immediately written to config.json as
+       ``last_links_file`` so it survives restarts.
+    4. Offer the destination folder picker.
+    5. Run the downloader.
     """
     console.print()
     console.print(Rule("[bold cyan]Batch Download[/]"))
     console.print()
 
-    default_hint = str(LINKS_FILE)
-    last_hint = str(cfg.last_links_file) if cfg.last_links_file else default_hint
+    links_path: Optional[Path] = cfg.last_links_file
 
-    console.print(f"[dim]  Default file: {default_hint}[/]")
-    if cfg.last_links_file and cfg.last_links_file != LINKS_FILE:
-        console.print(f"[dim]  Last used:    {last_hint}[/]")
-    console.print()
+    if not _is_valid_txt_file(links_path):
+        if links_path is not None:
+            console.print(f"[yellow]  Saved .txt file is missing or invalid:[/] {links_path}")
+        console.print("  Select a .txt file containing your URLs.")
+        console.print()
 
-    raw_path = _prompt(
-        "Path to .txt file (Enter for default links.txt)",
-        default=str(LINKS_FILE),
-    )
-    links_path = Path(raw_path).expanduser().resolve()
+        browsed = file_browser.select_txt_file()
+        if browsed is None:
+            console.print("[yellow]  No file selected — returning to menu.[/]")
+            _pause()
+            return
 
-    if not links_path.exists():
-        console.print(f"[bold red]✗  File not found:[/] {links_path}")
-        _pause()
-        return
-
-    if links_path.suffix.lower() not in (".txt", ""):
-        console.print("[yellow]  Warning: file doesn't have a .txt extension – proceeding anyway.[/]")
-
-    # Remember the chosen file (only if different from the default).
-    if links_path != LINKS_FILE:
+        links_path = browsed
         cfg.last_links_file = links_path
         cfg.save()
+        log.info("last_links_file saved: %s", links_path)
+    else:
+        console.print(f"  Current file: [cyan]{links_path}[/]")
+        console.print("  [dim]Press Enter to use it, or type 'b' to browse for a different file.[/]")
+        console.print()
+
+        raw_choice = _prompt("Continue with this file? (Enter/b)")
+
+        if raw_choice.strip().lower() == "b":
+            browsed = file_browser.select_txt_file(start=links_path.parent)
+            if browsed is None:
+                console.print("[yellow]  No file selected — keeping the current file.[/]")
+            else:
+                links_path = browsed
+                cfg.last_links_file = links_path
+                cfg.save()
+                log.info("last_links_file updated: %s", links_path)
+
+    console.print(f"  [green]✔  Using:[/] [cyan]{links_path}[/]")
+    console.print()
 
     folder = pick_folder(cfg)
 
@@ -400,23 +514,32 @@ def action_settings(cfg: AppConfig) -> None:
         choice = _prompt("Choose option [1–4]")
 
         if choice == "1":
-            # Force the folder picker to appear again.
-            cfg.last_download_folder = None
-            folder = pick_folder(cfg)  # will prompt and save
-            console.print(f"[green]✔  Download folder updated to:[/] {folder}")
+            # Per spec: Settings -> "Change download folder" launches the
+            # file browser directly (not the Last-Used/Movies/Downloads
+            # quick-pick menu used elsewhere).
+            folder = file_browser.select_folder(start=cfg.last_download_folder)
+            if folder is None:
+                console.print("[yellow]  No folder selected — keeping the current one.[/]")
+            else:
+                folder.mkdir(parents=True, exist_ok=True)
+                cfg.last_download_folder = folder
+                cfg.save()
+                console.print(f"[green]✔  Download folder updated to:[/] {folder}")
 
         elif choice == "2":
-            raw = _prompt(
-                "Enter path to default .txt file",
-                default=str(LINKS_FILE),
-            )
-            new_path = Path(raw).expanduser().resolve()
-            if new_path.exists():
+            # Per spec: Settings -> "Change default .txt file" launches the
+            # file browser directly, in .txt-file-selection mode.
+            current_default = cfg.last_links_file or LINKS_FILE
+            console.print(f"  Current default: [cyan]{current_default}[/]")
+            console.print()
+            start_dir = current_default.parent if current_default.exists() else None
+            new_path = file_browser.select_txt_file(start=start_dir)
+            if new_path is None:
+                console.print("[yellow]  No file selected — keeping the current default.[/]")
+            else:
                 cfg.last_links_file = new_path
                 cfg.save()
-                console.print(f"[green]✔  Default .txt file set to:[/] {new_path}")
-            else:
-                console.print(f"[yellow]  File not found: {new_path} – setting not changed.[/]")
+                console.print(f"[green]✔  Default .txt file set to:[/] [cyan]{new_path}[/]")
 
         elif choice == "3":
             cfg.last_download_folder = None
@@ -512,7 +635,8 @@ def _build_menu_table(cfg: AppConfig) -> Table:
     table.add_column("  Info", style="dim", min_width=0)
 
     table.add_row("1", "Single Video Download", "")
-    table.add_row("2", "Batch Download (.txt)", f"file: {Path(str(cfg.last_links_file or LINKS_FILE)).name}")
+    links_label = cfg.last_links_file.name if cfg.last_links_file else "not selected"
+    table.add_row("2", "Batch Download (.txt)", f"file: {links_label}")
     table.add_row("3", "History", f"{history_count} record(s)")
     table.add_row("4", failed_label, "")
     table.add_row("5", "Settings", f"folder: {folder_label}")

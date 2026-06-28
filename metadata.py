@@ -23,6 +23,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
+from openpyxl import Workbook, load_workbook
+
 from config import FAILED_FILE, HISTORY_FILE, METADATA_FILE
 
 if TYPE_CHECKING:
@@ -80,8 +82,9 @@ class MetadataRecord:
     description : str | None
         Full, untruncated video description text.
     hashtags : list[str]
-        Hashtags in original order (description first, then tags),
-        deduplicated while preserving first-seen order.
+        Hashtags merged from all available sources, in priority order
+        (description, then tags, then title, then a webpage-metadata
+        fallback), deduplicated while preserving first-seen order.
     thumbnail_url : str | None
         URL of the best available thumbnail.
     url : str
@@ -240,14 +243,19 @@ class MetadataRecord:
         hashtags = cls._extract_hashtags(
             description=info.get("description", ""),
             tags=info.get("tags") or [],
+            title=info.get("title"),
+            webpage_info=info,
         )
 
         thumbnail_url: Optional[str] = cls._best_thumbnail(info)
 
+        raw_title: str = info.get("title") or "Unknown Title"
+        clean_title: str = cls._clean_title(raw_title)
+
         return cls(
             file_number=file_number,
             filename=filename,
-            title=info.get("title") or "Unknown Title",
+            title=clean_title,
             channel=info.get("uploader") or info.get("channel") or "Unknown Channel",
             channel_id=info.get("channel_id") or info.get("uploader_id"),
             video_id=info.get("id"),
@@ -336,16 +344,45 @@ class MetadataRecord:
         return f"{value:.2f} PB"
 
     @staticmethod
+    def _clean_title(raw_title: str) -> str:
+        """
+        Return *raw_title* with all ``#hashtag`` tokens removed.
+
+        Hashtags are stripped via regex, then any resulting run of extra
+        whitespace is collapsed and the result is trimmed.  If cleaning
+        would leave an empty string (e.g. the title was only "#adiaava"),
+        the original, uncleaned title is kept instead so the Title field
+        is never blank.
+        """
+        without_hashtags = re.sub(r"#\w+", "", raw_title)
+        collapsed = re.sub(r"\s+", " ", without_hashtags).strip()
+        return collapsed if collapsed else raw_title
+
+    @staticmethod
     def _extract_hashtags(
         description: Optional[str],
         tags: list[str],
+        title: Optional[str] = None,
+        webpage_info: Optional[dict[str, Any]] = None,
     ) -> list[str]:
         """
         Return a deduplicated list of hashtags preserving first-seen order.
 
-        Hashtags are sourced first from inline ``#Tag`` patterns in the
-        video description, then from the platform tags list.  Alphabetical
-        sorting is intentionally avoided so the original order is kept.
+        Sources are mined in priority order, and results from every source
+        are merged together (not just the first non-empty one):
+
+        1. Inline ``#Tag`` patterns in the video description.
+        2. Platform tags list (``info["tags"]``).
+        3. Inline ``#Tag`` patterns in the video title.
+        4. As a last-resort fallback, any inline ``#Tag`` patterns found in
+           other webpage-sourced text fields yt-dlp may return for a given
+           extractor (currently ``categories``) — only consulted if nothing
+           was found in the first three sources, since most extractors
+           don't populate this with hashtag-style data.
+
+        Deduplication is case-insensitive; the first-seen casing is kept.
+        Alphabetical sorting is intentionally avoided so the original
+        order is preserved.
         """
         seen: set[str] = set()
         result: list[str] = []
@@ -356,12 +393,16 @@ class MetadataRecord:
                 seen.add(key)
                 result.append(tag)
 
-        # Mine inline hashtags from the description (preserves order).
-        if description:
-            for match in re.finditer(r"#(\w+)", description):
+        def _add_inline(text: Optional[str]) -> None:
+            if not text:
+                return
+            for match in re.finditer(r"#(\w+)", text):
                 _add(f"#{match.group(1)}")
 
-        # Include explicit platform tags in their original order.
+        # 1. Mine inline hashtags from the description (preserves order).
+        _add_inline(description)
+
+        # 2. Include explicit platform tags in their original order.
         for tag in tags:
             if tag:
                 normalised = tag.strip()
@@ -371,6 +412,20 @@ class MetadataRecord:
                         if normalised.startswith("#")
                         else f"#{normalised}"
                     )
+
+        # 3. Mine inline hashtags from the title.
+        _add_inline(title)
+
+        # 4. Last resort: scan webpage-sourced metadata fields yt-dlp
+        # returns for some extractors, in case a platform stores hashtags
+        # somewhere other than description/tags/title.  Only used when
+        # nothing has been found yet, since this data is extractor-specific
+        # and not guaranteed to exist.
+        if not result and webpage_info:
+            categories = webpage_info.get("categories") or []
+            for category in categories:
+                if isinstance(category, str):
+                    _add_inline(category)
 
         return result
 
@@ -534,8 +589,26 @@ class MetadataManager:
         self,
         path: Path = METADATA_FILE,
         logger: Optional["Logger"] = None,
+        videos_dir: Optional[Path] = None,
     ) -> None:
-        self._path = path
+        """
+        Parameters
+        ----------
+        path:
+            Explicit metadata file location.  Used as-is when *videos_dir*
+            is not supplied — kept for backward compatibility with any
+            existing caller that constructs ``MetadataManager`` directly.
+        logger:
+            Optional :class:`Logger`; falls back to :func:`_default_logger`.
+        videos_dir:
+            Directory where this run's videos are being saved.  When
+            given, metadata.txt is always written inside this exact
+            folder (``videos_dir / "metadata.txt"``), regardless of
+            *path*.  This is what makes metadata.txt follow the user's
+            chosen download destination instead of always landing in a
+            single fixed project-root location.
+        """
+        self._path = (videos_dir / "metadata.txt") if videos_dir is not None else path
         self._log = logger or _default_logger()
 
     def append(self, meta: MetadataRecord) -> None:
@@ -548,7 +621,7 @@ class MetadataManager:
             Populated :class:`MetadataRecord` instance.
         """
         hashtag_str = (
-            "  ".join(meta.hashtags) if meta.hashtags else "N/A"
+            "  ".join(meta.hashtags) if meta.hashtags else "No hashtags"
         )
         description_block = self._format_description(meta.description)
 
@@ -608,6 +681,7 @@ class MetadataManager:
         ]
 
         try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
             with self._path.open("a", encoding="utf-8") as fh:
                 fh.write("\n".join(lines))
         except OSError as exc:
@@ -631,6 +705,135 @@ class MetadataManager:
             f"  {line}" if line.strip() else ""
             for line in text.splitlines()
         )
+
+
+# ===========================================================================
+# ExcelMetadataManager
+# ===========================================================================
+
+
+class ExcelMetadataManager:
+    """
+    Appends one row to *metadata.xlsx* after each successful download.
+
+    This mirrors :class:`MetadataManager` (which writes *metadata.txt*) but
+    targets a spreadsheet instead, so the two files stay synchronized: every
+    call to :meth:`append` should be paired with a call to
+    ``MetadataManager.append`` for the same record.
+
+    Behaviour:
+
+    * If *metadata.xlsx* does not exist yet, it is created with the header
+      row below.
+    * If it already exists, the workbook is loaded as-is and a new row is
+      appended at the end — existing rows are never modified, reordered,
+      or overwritten.
+    * Saving is done by rewriting the whole workbook file; this is the
+      normal openpyxl save pattern and does not alter previously written
+      rows.
+    """
+
+    HEADERS: tuple[str, ...] = (
+        "File No",
+        "File Name",
+        "Title",
+        "Hashtags",
+        "Channel",
+        "Upload Date",
+        "Duration",
+        "Resolution",
+        "FPS",
+        "Video Codec",
+        "Audio Codec",
+        "File Size (MB)",
+        "URL",
+        "Downloaded At",
+    )
+
+    _SHEET_NAME: str = "Metadata"
+
+    def __init__(
+        self,
+        path: Optional[Path] = None,
+        logger: Optional["Logger"] = None,
+        videos_dir: Optional[Path] = None,
+    ) -> None:
+        """
+        Parameters
+        ----------
+        path:
+            Explicit metadata.xlsx location.  Used as-is when *videos_dir*
+            is not supplied.
+        logger:
+            Optional :class:`Logger`; falls back to :func:`_default_logger`.
+        videos_dir:
+            Directory where this run's videos are being saved.  When
+            given, metadata.xlsx is always written inside this exact
+            folder (``videos_dir / "metadata.xlsx"``), mirroring
+            :class:`MetadataManager`'s placement of metadata.txt.
+        """
+        if videos_dir is not None:
+            self._path = videos_dir / "metadata.xlsx"
+        elif path is not None:
+            self._path = path
+        else:
+            self._path = METADATA_FILE.with_name("metadata.xlsx")
+        self._log = logger or _default_logger()
+
+    def append(self, meta: MetadataRecord) -> None:
+        """
+        Append a single row for a completed download to *metadata.xlsx*.
+
+        Creates the workbook with headers first if it does not yet exist.
+        Existing rows are left untouched — the row for this download is
+        always added after the last existing row.
+        """
+        hashtag_str = "  ".join(meta.hashtags) if meta.hashtags else "No hashtags"
+        filesize_mb: Optional[float] = (
+            round(meta.filesize_bytes / (1024 * 1024), 2)
+            if meta.filesize_bytes is not None
+            else None
+        )
+
+        row = (
+            meta.file_number,
+            meta.filename,
+            meta.title,
+            hashtag_str,
+            meta.channel,
+            meta.upload_date or "N/A",
+            meta.duration_formatted,
+            meta.resolution or "N/A",
+            meta.fps if meta.fps is not None else "N/A",
+            meta.video_codec or "N/A",
+            meta.audio_codec or "N/A",
+            filesize_mb if filesize_mb is not None else "N/A",
+            meta.url,
+            meta.downloaded_at,
+        )
+
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+
+            if self._path.exists():
+                workbook = load_workbook(self._path)
+                if self._SHEET_NAME in workbook.sheetnames:
+                    sheet = workbook[self._SHEET_NAME]
+                else:
+                    # File exists but lacks our sheet (unexpected edit by
+                    # the user) — add it rather than touching anything else.
+                    sheet = workbook.create_sheet(self._SHEET_NAME)
+                    sheet.append(self.HEADERS)
+            else:
+                workbook = Workbook()
+                sheet = workbook.active
+                sheet.title = self._SHEET_NAME
+                sheet.append(self.HEADERS)
+
+            sheet.append(row)
+            workbook.save(self._path)
+        except OSError as exc:
+            self._log.error("Cannot write Excel metadata file: %s", exc)
 
 
 # ===========================================================================

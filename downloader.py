@@ -18,6 +18,7 @@ Re-exported for callers that previously imported from this module
     MetadataRecord  – from metadata.py
     HistoryManager  – from metadata.py
     MetadataManager – from metadata.py
+    ExcelMetadataManager – from metadata.py
     ProgressTracker – from ui.py
 
 Metadata fields recorded per download
@@ -57,7 +58,12 @@ from config import (
     RETRY_SLEEP,
     VIDEOS_DIR,
 )
-from metadata import HistoryManager, MetadataManager, MetadataRecord
+from metadata import (
+    ExcelMetadataManager,
+    HistoryManager,
+    MetadataManager,
+    MetadataRecord,
+)
 from ui import ProgressTracker
 
 # ---------------------------------------------------------------------------
@@ -84,6 +90,7 @@ __all__ = [
     "MetadataRecord",
     "HistoryManager",
     "MetadataManager",
+    "ExcelMetadataManager",
     # re-exported from ui.py
     "ProgressTracker",
 ]
@@ -192,7 +199,8 @@ class Downloader:
         self._videos_dir = videos_dir
         self._log = logger or Logger()
         self._history = HistoryManager(logger=self._log)
-        self._metadata = MetadataManager(logger=self._log)
+        self._metadata = MetadataManager(logger=self._log, videos_dir=self._videos_dir)
+        self._excel_metadata = ExcelMetadataManager(logger=self._log, videos_dir=self._videos_dir)
         self._interrupted: bool = False
 
         # Ensure output directories exist.
@@ -482,6 +490,7 @@ class Downloader:
         )
         self._history.record(meta)
         self._metadata.append(meta)
+        self._excel_metadata.append(meta)
 
         # Detailed success log line.
         self._log.info(
