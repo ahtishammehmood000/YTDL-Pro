@@ -1,0 +1,114 @@
+------------------------------------------------------------------------
+File       : 1.mp4
+Title      : EPIC PC FAILS RANKED
+URL        : https://www.youtube.com/watch?v=RPZ0-h1f2nU
+Uploader   : RedFanRanked
+Upload Date: 2026-01-04
+Duration   : 0m 45s
+Views      : 40491900
+Likes      : 745776
+Resolution : 1080x1920
+FPS        : 30
+Saved At   : 2026-06-27T16:35:12.735738+00:00
+------------------------------------------------------------------------
+File       : 2.mp4
+Title      : Bu’s little paw care routine🩵🫧💅🐱 #animalshorts #pets #animals #cat #catvideos #cats
+URL        : https://www.youtube.com/watch?v=hkDhgXdQnuk
+Uploader   : dindin.inparis 
+Upload Date: 2026-02-09
+Duration   : 0m 33s
+Views      : 79445631
+Likes      : 974350
+Resolution : 1440x2560
+FPS        : 60
+Saved At   : 2026-06-27T16:35:54.332872+00:00
+========================================================================
+  YTDL-Pro  |  Download Record
+========================================================================
+
+  General Information
+------------------------------------------------------------------------
+  File Number      : 3
+  Filename         : 3.mp4
+  Original URL     : https://www.youtube.com/watch?v=X5p55LLXr6I
+
+  Video Information
+------------------------------------------------------------------------
+  Title            : Jacob Witzling's Axe Skills #fyp #skills #axe #foryou
+  Channel          : Kym Ameh
+  Channel ID       : UCsvZw9I2omT403hyHf69qSA
+  Video ID         : X5p55LLXr6I
+  Upload Date      : 2026-05-12
+  Upload Timestamp : 1778557448
+  Thumbnail URL    : https://i.ytimg.com/vi_webp/X5p55LLXr6I/maxresdefault.webp
+
+  Technical Information
+------------------------------------------------------------------------
+  Duration         : 0m 54s
+  Duration (sec)   : 54
+  Resolution       : 1080x1920
+  FPS              : 30.0
+  Video Codec      : av01.0.08M.08
+  Audio Codec      : opus
+  File Size        : 15.71 MB
+  File Size (bytes): 16468626
+
+  Hashtags
+------------------------------------------------------------------------
+  N/A
+
+  Description
+------------------------------------------------------------------------
+  (no description)
+
+  Download Information
+------------------------------------------------------------------------
+  Downloaded At    : 2026-06-27T17:37:20.883908+00:00
+  Download Status  : success
+
+========================================================================
+========================================================================
+  YTDL-Pro  |  Download Record
+========================================================================
+
+  General Information
+------------------------------------------------------------------------
+  File Number      : 4
+  Filename         : 4.mp4
+  Original URL     : https://www.youtube.com/watch?v=X5p55LLXr6I
+
+  Video Information
+------------------------------------------------------------------------
+  Title            : Jacob Witzling's Axe Skills #fyp #skills #axe #foryou
+  Channel          : Kym Ameh
+  Channel ID       : UCsvZw9I2omT403hyHf69qSA
+  Video ID         : X5p55LLXr6I
+  Upload Date      : 2026-05-12
+  Upload Timestamp : 1778557448
+  Thumbnail URL    : https://i.ytimg.com/vi_webp/X5p55LLXr6I/maxresdefault.webp
+
+  Technical Information
+------------------------------------------------------------------------
+  Duration         : 0m 54s
+  Duration (sec)   : 54
+  Resolution       : 1080x1920
+  FPS              : 30.0
+  Video Codec      : av01.0.08M.08
+  Audio Codec      : opus
+  File Size        : 15.71 MB
+  File Size (bytes): 16468626
+
+  Hashtags
+------------------------------------------------------------------------
+  N/A
+
+  Description
+------------------------------------------------------------------------
+  (no description)
+
+  Download Information
+------------------------------------------------------------------------
+  Downloaded At    : 2026-06-28T00:15:29.526623+00:00
+  Download Status  : success
+
+========================================================================

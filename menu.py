@@ -1,0 +1,569 @@
+"""
+menu.py - Interactive terminal menu for YTDL-Pro.
+
+Implements the full screen-driven menu that opens when the user runs
+``python main.py`` with no arguments.  All existing CLI sub-commands
+continue to work exactly as before; this module is only invoked when
+there are no command-line arguments.
+
+Menu structure
+--------------
+  1  Single Video Download   – paste a URL → choose folder → download
+  2  Batch Download (.txt)   – pick a file → choose folder → download
+  3  History                 – delegates to CommandHistory.run()
+  4  Failed Downloads        – delegates to CommandFailed.run()
+  5  Settings                – change download folder, reset config
+  6  About                   – project info panel
+  7  Exit
+
+The folder-picker sub-menu appears before every download (single or batch)
+**unless** a folder is already stored in config.json, in which case it is
+reused silently.  The user can always change it via Settings → option 1.
+"""
+
+from __future__ import annotations
+
+import sys
+import tempfile
+from pathlib import Path
+from typing import Optional
+
+from rich import box
+from rich.align import Align
+from rich.console import Console
+from rich.panel import Panel
+from rich.rule import Rule
+from rich.table import Table
+from rich.text import Text
+
+from app_config import DEFAULT_FOLDER, PRESET_FOLDERS, AppConfig
+from downloader import (
+    FAILED_FILE,
+    HISTORY_FILE,
+    LINKS_FILE,
+    BASE_DIR,
+    Downloader,
+    HistoryManager,
+    Logger,
+)
+
+console: Console = Console()
+log: Logger = Logger()
+
+# ---------------------------------------------------------------------------
+# Application constants shared across menu and main.
+# ---------------------------------------------------------------------------
+APP_NAME: str = "YTDL-Pro"
+APP_VERSION: str = "2.0"
+APP_AUTHOR: str = "Ahtisham Mahmood"
+APP_DESCRIPTION: str = "Professional YouTube Downloader for Termux"
+
+
+# ===========================================================================
+# Banner (shared with main.py via import)
+# ===========================================================================
+
+
+def print_banner(*, clear: bool = False) -> None:
+    """
+    Render the YTDL-Pro banner panel.
+
+    Parameters
+    ----------
+    clear:
+        When True, print blank lines before the banner to visually
+        separate it from the previous menu screen.
+    """
+    if clear:
+        console.print("\n" * 2)
+
+    author_line = Text(f"By {APP_AUTHOR}", style="dim italic")
+    version_line = Text(f"v{APP_VERSION}  •  {APP_DESCRIPTION}", style="dim")
+
+    content = Align.center(
+        Text.assemble(author_line, "\n", version_line)
+    )
+
+    banner = Align.center(
+        Panel(
+            content,
+            title=Text(f"  {APP_NAME}  ", style="bold cyan"),
+            border_style="cyan",
+            padding=(0, 6),
+        )
+    )
+    console.print(banner)
+    console.print()
+
+
+# ===========================================================================
+# Low-level input helpers
+# ===========================================================================
+
+
+def _prompt(label: str, default: str = "") -> str:
+    """
+    Display a styled prompt and return stripped user input.
+    Falls back to *default* on empty input.
+    """
+    hint = f" [dim](default: {default})[/]" if default else ""
+    console.print(f"[bold cyan]▶[/]  {label}{hint}", end="  ")
+    try:
+        raw = input()
+    except (EOFError, KeyboardInterrupt):
+        console.print()
+        return default
+    value = raw.strip()
+    return value if value else default
+
+
+def _choose(prompt: str, choices: list[str]) -> str:
+    """
+    Display a numbered list of *choices* and return the chosen item.
+    Re-prompts until a valid number is entered.
+    """
+    while True:
+        raw = _prompt(prompt)
+        if raw.isdigit():
+            idx = int(raw) - 1
+            if 0 <= idx < len(choices):
+                return choices[idx]
+        console.print("[yellow]  Please enter a number from the list above.[/]")
+
+
+def _pause() -> None:
+    """Wait for Enter before returning to the menu."""
+    console.print("\n[dim]Press Enter to return to the main menu…[/]", end="  ")
+    try:
+        input()
+    except (EOFError, KeyboardInterrupt):
+        pass
+    console.print()
+
+
+# ===========================================================================
+# Folder picker
+# ===========================================================================
+
+
+def pick_folder(cfg: AppConfig) -> Path:
+    """
+    Ask the user where to save videos.
+
+    If ``cfg.last_download_folder`` is already set, that folder is returned
+    immediately without asking – the user can change it via Settings.
+
+    Otherwise the folder-picker sub-menu is shown:
+
+        1  Last used  (only shown if a folder is stored)
+        2  Movies     (~/ Movies)
+        3  Downloads  (~/ Downloads)
+        4  Custom path
+
+    The chosen folder is saved to *cfg* (caller is responsible for
+    calling ``cfg.save()`` afterwards).
+
+    Returns
+    -------
+    Path
+        Absolute path to the chosen (and created) directory.
+    """
+    # Already have a remembered folder – use it silently.
+    if cfg.last_download_folder is not None:
+        return cfg.last_download_folder
+
+    # Build the menu options dynamically.
+    options: list[tuple[str, Optional[Path]]] = []
+
+    for name, path in PRESET_FOLDERS.items():
+        options.append((f"{name}  ({path})", path))
+
+    options.append(("Custom path…", None))
+
+    # Display picker.
+    console.print()
+    console.print(Rule("[bold cyan]Download Destination[/]"))
+    console.print()
+
+    table = Table(box=box.SIMPLE, show_header=False, pad_edge=False)
+    table.add_column("  #", style="bold cyan", justify="right", min_width=3)
+    table.add_column("  Location", style="white")
+
+    for i, (label, _) in enumerate(options, start=1):
+        table.add_row(str(i), label)
+
+    console.print(table)
+    console.print()
+
+    while True:
+        raw = _prompt(f"Choose destination [1–{len(options)}]")
+        if raw.isdigit():
+            idx = int(raw) - 1
+            if 0 <= idx < len(options):
+                _, chosen_path = options[idx]
+                break
+        console.print("[yellow]  Invalid choice. Enter a number from the list.[/]")
+
+    if chosen_path is None:
+        # Custom path.
+        while True:
+            raw_path = _prompt("Enter full path to save folder")
+            if raw_path:
+                chosen_path = Path(raw_path).expanduser().resolve()
+                break
+            console.print("[yellow]  Path cannot be empty.[/]")
+
+    chosen_path.mkdir(parents=True, exist_ok=True)
+    cfg.last_download_folder = chosen_path
+    cfg.save()
+    console.print(
+        f"\n[green]✔  Folder set to:[/] [cyan]{chosen_path}[/]\n"
+        f"   [dim](Change anytime via Settings → option 1)[/]\n"
+    )
+    return chosen_path
+
+
+# ===========================================================================
+# Menu actions
+# ===========================================================================
+
+
+def action_single_video(cfg: AppConfig) -> None:
+    """
+    Menu item 1 – Single Video Download.
+
+    Asks for a URL, resolves the download folder, writes the URL to a
+    temporary file, and calls Downloader with that file + folder.
+    The temporary file is removed after the download finishes.
+    """
+    console.print()
+    console.print(Rule("[bold cyan]Single Video Download[/]"))
+    console.print()
+
+    url = _prompt("Paste the YouTube URL")
+    if not url:
+        console.print("[yellow]  No URL entered – returning to menu.[/]")
+        _pause()
+        return
+
+    if not (url.startswith("http://") or url.startswith("https://")):
+        console.print("[yellow]  That doesn't look like a URL.  Please include http:// or https://[/]")
+        _pause()
+        return
+
+    folder = pick_folder(cfg)
+
+    # Write the single URL to a temporary file so Downloader can read it.
+    tmp_file: Optional[Path] = None
+    try:
+        fd, tmp_str = tempfile.mkstemp(prefix=".ytdl_single_", suffix=".txt", dir=BASE_DIR)
+        tmp_file = Path(tmp_str)
+        with open(fd, "w", encoding="utf-8") as fh:
+            fh.write(url + "\n")
+
+        log.info("Single-video download: %s → %s", url, folder)
+        downloader = Downloader(links_file=tmp_file, videos_dir=folder)
+        downloader.run()
+
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[bold red]✗  Download failed:[/] {exc}")
+        log.exception("Single-video download error: %s", exc)
+    finally:
+        if tmp_file is not None:
+            try:
+                tmp_file.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    _pause()
+
+
+def action_batch_download(cfg: AppConfig) -> None:
+    """
+    Menu item 2 – Batch Download (.txt).
+
+    Asks for a .txt file path (Enter → default links.txt), then a folder,
+    and delegates to Downloader.
+    """
+    console.print()
+    console.print(Rule("[bold cyan]Batch Download[/]"))
+    console.print()
+
+    default_hint = str(LINKS_FILE)
+    last_hint = str(cfg.last_links_file) if cfg.last_links_file else default_hint
+
+    console.print(f"[dim]  Default file: {default_hint}[/]")
+    if cfg.last_links_file and cfg.last_links_file != LINKS_FILE:
+        console.print(f"[dim]  Last used:    {last_hint}[/]")
+    console.print()
+
+    raw_path = _prompt(
+        "Path to .txt file (Enter for default links.txt)",
+        default=str(LINKS_FILE),
+    )
+    links_path = Path(raw_path).expanduser().resolve()
+
+    if not links_path.exists():
+        console.print(f"[bold red]✗  File not found:[/] {links_path}")
+        _pause()
+        return
+
+    if links_path.suffix.lower() not in (".txt", ""):
+        console.print("[yellow]  Warning: file doesn't have a .txt extension – proceeding anyway.[/]")
+
+    # Remember the chosen file (only if different from the default).
+    if links_path != LINKS_FILE:
+        cfg.last_links_file = links_path
+        cfg.save()
+
+    folder = pick_folder(cfg)
+
+    log.info("Batch download: file=%s → folder=%s", links_path, folder)
+    try:
+        downloader = Downloader(links_file=links_path, videos_dir=folder)
+        downloader.run()
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[bold red]✗  Download failed:[/] {exc}")
+        log.exception("Batch download error: %s", exc)
+
+    _pause()
+
+
+def action_history() -> None:
+    """
+    Menu item 3 – History.
+    Delegates to CommandHistory (imported lazily to avoid circular imports).
+    """
+    # Lazy import: CommandHistory lives in main.py.
+    from main import CommandHistory  # noqa: PLC0415
+
+    console.print()
+    CommandHistory().run()
+    _pause()
+
+
+def action_failed() -> None:
+    """
+    Menu item 4 – Failed Downloads.
+    Shows the table and asks whether to retry.
+    """
+    from main import CommandFailed  # noqa: PLC0415
+
+    console.print()
+    urls = CommandFailed._load_failed_urls()
+
+    if not urls:
+        console.print("[bold green]✔  No failed URLs.[/]")
+        _pause()
+        return
+
+    CommandFailed._print_table(urls)
+
+    answer = _prompt("Retry all failed downloads? [y/N]", default="n").lower()
+    if answer in ("y", "yes"):
+        CommandFailed().run(retry=True)
+
+    _pause()
+
+
+def action_settings(cfg: AppConfig) -> None:
+    """
+    Menu item 5 – Settings.
+
+    Sub-options:
+        1  Change download folder
+        2  Change default .txt file
+        3  Reset all settings
+        4  Back
+    """
+    while True:
+        console.print()
+        console.print(Rule("[bold cyan]Settings[/]"))
+        console.print()
+
+        current_folder = cfg.last_download_folder or DEFAULT_FOLDER
+        current_links = cfg.last_links_file or LINKS_FILE
+
+        table = Table(box=box.SIMPLE, show_header=False, pad_edge=False)
+        table.add_column("  #", style="bold cyan", justify="right", min_width=3)
+        table.add_column("  Option", style="white")
+        table.add_column("  Current", style="dim")
+
+        table.add_row("1", "Change download folder", str(current_folder))
+        table.add_row("2", "Change default .txt file", str(current_links))
+        table.add_row("3", "Reset all settings to defaults", "")
+        table.add_row("4", "Back to main menu", "")
+
+        console.print(table)
+        console.print()
+
+        choice = _prompt("Choose option [1–4]")
+
+        if choice == "1":
+            # Force the folder picker to appear again.
+            cfg.last_download_folder = None
+            folder = pick_folder(cfg)  # will prompt and save
+            console.print(f"[green]✔  Download folder updated to:[/] {folder}")
+
+        elif choice == "2":
+            raw = _prompt(
+                "Enter path to default .txt file",
+                default=str(LINKS_FILE),
+            )
+            new_path = Path(raw).expanduser().resolve()
+            if new_path.exists():
+                cfg.last_links_file = new_path
+                cfg.save()
+                console.print(f"[green]✔  Default .txt file set to:[/] {new_path}")
+            else:
+                console.print(f"[yellow]  File not found: {new_path} – setting not changed.[/]")
+
+        elif choice == "3":
+            cfg.last_download_folder = None
+            cfg.last_links_file = None
+            cfg.ui_color = "cyan"
+            cfg.save()
+            console.print("[green]✔  All settings reset to defaults.[/]")
+
+        elif choice == "4":
+            break
+
+        else:
+            console.print("[yellow]  Enter 1, 2, 3, or 4.[/]")
+
+
+def action_about() -> None:
+    """
+    Menu item 6 – About.
+    """
+    console.print()
+    console.print(Rule("[bold cyan]About[/]"))
+    console.print()
+
+    lines = Text.assemble(
+        Text(f"{APP_NAME}\n", style="bold cyan"),
+        Text(f"Version {APP_VERSION}\n\n", style="dim"),
+        Text(f"By {APP_AUTHOR}\n\n", style="white"),
+        Text(f"{APP_DESCRIPTION}\n\n", style="dim"),
+        Text("Features\n", style="bold white"),
+        Text("  • Best-quality video + audio merged to MP4\n", style="dim"),
+        Text("  • Sequential automatic file numbering\n", style="dim"),
+        Text("  • Full metadata & history tracking\n", style="dim"),
+        Text("  • Playlist support\n", style="dim"),
+        Text("  • Retry on failure\n", style="dim"),
+        Text("  • Interactive menu + classic CLI sub-commands\n", style="dim"),
+    )
+
+    console.print(
+        Align.center(
+            Panel(
+                Align.center(lines),
+                border_style="cyan",
+                padding=(1, 6),
+            )
+        )
+    )
+
+    _pause()
+
+
+# ===========================================================================
+# Main menu loop
+# ===========================================================================
+
+
+def _build_menu_table(cfg: AppConfig) -> Table:
+    """Render the numbered menu as a Rich table."""
+    folder_label = str(cfg.last_download_folder or DEFAULT_FOLDER)
+
+    # Truncate long paths for display.
+    if len(folder_label) > 48:
+        folder_label = "…" + folder_label[-47:]
+
+    history = HistoryManager()
+    records = history.all_records()
+    history_count = len(records)
+
+    failed_count = (
+        sum(
+            1
+            for line in FAILED_FILE.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+        if FAILED_FILE.exists()
+        else 0
+    )
+
+    failed_label = (
+        f"[bold red]Failed Downloads  ({failed_count} pending)[/]"
+        if failed_count
+        else "Failed Downloads"
+    )
+
+    table = Table(
+        box=box.ROUNDED,
+        border_style="cyan",
+        show_header=False,
+        pad_edge=True,
+        min_width=52,
+    )
+    table.add_column("  #", style="bold cyan", justify="right", min_width=4)
+    table.add_column("  Menu Item", style="white", min_width=36)
+    table.add_column("  Info", style="dim", min_width=0)
+
+    table.add_row("1", "Single Video Download", "")
+    table.add_row("2", "Batch Download (.txt)", f"file: {Path(str(cfg.last_links_file or LINKS_FILE)).name}")
+    table.add_row("3", "History", f"{history_count} record(s)")
+    table.add_row("4", failed_label, "")
+    table.add_row("5", "Settings", f"folder: {folder_label}")
+    table.add_row("6", "About", "")
+    table.add_row("7", "Exit", "")
+
+    return table
+
+
+def run_menu() -> None:
+    """
+    Main interactive menu loop.
+
+    Entered when ``python main.py`` is called with no arguments.
+    Loops until the user chooses Exit (7) or presses Ctrl+C.
+    """
+    cfg = AppConfig.load()
+
+    while True:
+        # Clear screen cheaply by printing enough blank lines.
+        console.print("\n" * 1)
+        print_banner()
+
+        table = _build_menu_table(cfg)
+        console.print(Align.center(table))
+        console.print()
+
+        raw = _prompt("Choose option [1–7]")
+
+        if raw == "1":
+            action_single_video(cfg)
+
+        elif raw == "2":
+            action_batch_download(cfg)
+
+        elif raw == "3":
+            action_history()
+
+        elif raw == "4":
+            action_failed()
+
+        elif raw == "5":
+            action_settings(cfg)
+
+        elif raw == "6":
+            action_about()
+
+        elif raw == "7":
+            console.print("\n[bold cyan]Goodbye![/]\n")
+            sys.exit(0)
+
+        else:
+            console.print("[yellow]  Please enter a number between 1 and 7.[/]")
+            _pause()

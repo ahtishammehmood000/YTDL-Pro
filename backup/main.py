@@ -1,18 +1,21 @@
 """
 main.py - Entry point for YTDL-Pro.
 
-Running with no arguments opens the interactive menu::
+Provides a Rich-rendered CLI with four sub-commands:
 
-    python main.py
+    download   Run the full download queue from links.txt
+    history    Display download history from history.json
+    failed     Show / retry failed URLs from failed.txt
+    info       Print project paths and environment diagnostics
 
-Classic CLI sub-commands (backward-compatible, unchanged):
+Usage (Termux / any POSIX shell):
 
     python main.py download
-    python main.py history [-n N]
-    python main.py failed [--retry]
+    python main.py history
+    python main.py failed
+    python main.py failed --retry
     python main.py info
     python main.py --help
-    python main.py --version
 """
 
 from __future__ import annotations
@@ -25,8 +28,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from rich.align import Align
 from rich.console import Console
+from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 from rich import box
 
 # ---------------------------------------------------------------------------
@@ -47,30 +53,35 @@ from downloader import (
 )
 
 # ---------------------------------------------------------------------------
-# menu.py provides the interactive menu, shared banner, and app constants.
-# Importing here gives CommandInfo etc. access to APP_NAME / APP_VERSION.
-# ---------------------------------------------------------------------------
-from menu import (
-    APP_DESCRIPTION,
-    APP_NAME,
-    APP_VERSION,
-    print_banner,
-    run_menu,
-)
-
-# ---------------------------------------------------------------------------
 # Module-level singletons.
 # ---------------------------------------------------------------------------
 console: Console = Console()
 log: Logger = Logger()
 
+# Application metadata.
+APP_NAME: str = "YTDL-Pro"
+APP_VERSION: str = "1.0.0"
+APP_DESCRIPTION: str = "Professional YouTube Downloader for Termux"
 
-# ---------------------------------------------------------------------------
-# _print_banner: thin wrapper kept so every CommandXxx.run() call below
-# continues to work without modification.
-# ---------------------------------------------------------------------------
-def _print_banner() -> None:  # noqa: D401
-    print_banner()
+
+# ===========================================================================
+# Banner
+# ===========================================================================
+
+def _print_banner() -> None:
+    """Render the application banner using Rich."""
+    title = Text(f"  {APP_NAME}  ", style="bold cyan")
+    subtitle = Text(f"v{APP_VERSION}  •  {APP_DESCRIPTION}", style="dim")
+    banner = Align.center(
+        Panel(
+            Align.center(subtitle),
+            title=title,
+            border_style="cyan",
+            padding=(0, 4),
+        )
+    )
+    console.print(banner)
+    console.print()
 
 
 # ===========================================================================
@@ -627,7 +638,7 @@ class CLI:
         )
 
         sub = parser.add_subparsers(dest="command", metavar="<command>")
-        sub.required = False  # No args → interactive menu
+        sub.required = True
 
         # download
         sub.add_parser(
@@ -694,21 +705,12 @@ class CLI:
         Parse ``sys.argv``, dispatch to the appropriate command handler,
         and return an exit code.
 
-        When no sub-command is provided (``args.command is None``) the
-        interactive menu is launched via :func:`~menu.run_menu`.
-
         Returns
         -------
         int
             0 on success, non-zero on error.
         """
         args = self._parser.parse_args()
-
-        # No sub-command → interactive menu.
-        if args.command is None:
-            run_menu()
-            return 0  # run_menu calls sys.exit internally; this is a fallback.
-
         log.info("Command invoked: %s", args.command)
 
         if args.command == "download":
@@ -723,6 +725,7 @@ class CLI:
         if args.command == "info":
             return CommandInfo().run()
 
+        # Unreachable due to sub.required = True, but satisfies type checkers.
         self._parser.print_help()
         return 1
 
@@ -731,16 +734,13 @@ class CLI:
 # Entry point
 # ===========================================================================
 
-
 def main() -> None:
     """
     YTDL-Pro entry point.
 
-    * No arguments  → opens the interactive menu (:func:`~menu.run_menu`).
-    * With arguments → dispatches to the matching CLI sub-command.
-
-    Any unhandled exception is caught here so the user always sees a clean
-    Rich-formatted error rather than a raw traceback.
+    Instantiates :class:`CLI`, runs the selected sub-command, and exits with
+    the returned status code.  Any unhandled exception is caught here so the
+    user always sees a clean Rich-formatted error rather than a raw traceback.
     """
     try:
         cli = CLI()

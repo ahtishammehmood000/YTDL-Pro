@@ -3,49 +3,90 @@ downloader.py - Core download engine for YTDL-Pro.
 
 Handles reading URLs from links.txt, downloading best-quality video+audio
 via yt-dlp, merging to MP4, tracking history, saving metadata, and logging.
+
+Public surface (unchanged for backward compatibility)
+-----------------------------------------------------
+Constants / paths
+    BASE_DIR, VIDEOS_DIR, LOGS_DIR, LINKS_FILE, HISTORY_FILE,
+    METADATA_FILE, FAILED_FILE, LOG_FILE, MAX_RETRIES, RETRY_SLEEP
+
+Classes
+    Logger          – structured file + stderr logging
+    Downloader      – full download pipeline orchestrator
+
+Re-exported for callers that previously imported from this module
+    MetadataRecord  – from metadata.py
+    HistoryManager  – from metadata.py
+    MetadataManager – from metadata.py
+    ProgressTracker – from ui.py
+
+Metadata fields recorded per download
+--------------------------------------
+    file_number, filename, title, channel, channel_id, video_id,
+    duration_seconds, duration_formatted, upload_date, upload_timestamp,
+    resolution, fps, video_codec, audio_codec, filesize_bytes,
+    filesize_formatted, description, hashtags, thumbnail_url, url,
+    downloaded_at, download_status
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import os
 import signal
 import sys
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
 import yt_dlp
 from rich.console import Console
-from rich.progress import (
-    BarColumn,
-    DownloadColumn,
-    Progress,
-    SpinnerColumn,
-    TaskID,
-    TextColumn,
-    TimeRemainingColumn,
-    TransferSpeedColumn,
-)
 from rich.table import Table
 
 # ---------------------------------------------------------------------------
-# Project-level paths (resolved relative to this file so the module is
-# importable from any working directory).
+# Internal modules
 # ---------------------------------------------------------------------------
-BASE_DIR: Path = Path(__file__).parent.resolve()
-VIDEOS_DIR: Path = BASE_DIR / "Videos"
-LOGS_DIR: Path = BASE_DIR / "Logs"
-LINKS_FILE: Path = BASE_DIR / "links.txt"
-HISTORY_FILE: Path = BASE_DIR / "history.json"
-METADATA_FILE: Path = BASE_DIR / "metadata.txt"
-FAILED_FILE: Path = BASE_DIR / "failed.txt"
-LOG_FILE: Path = LOGS_DIR / "latest.log"
+from config import (
+    BASE_DIR,
+    FAILED_FILE,
+    HISTORY_FILE,
+    LINKS_FILE,
+    LOG_FILE,
+    LOGS_DIR,
+    MAX_RETRIES,
+    METADATA_FILE,
+    RETRY_SLEEP,
+    VIDEOS_DIR,
+)
+from metadata import HistoryManager, MetadataManager, MetadataRecord
+from ui import ProgressTracker
 
-MAX_RETRIES: int = 3
-RETRY_SLEEP: float = 3.0  # seconds between retry attempts
+# ---------------------------------------------------------------------------
+# Re-export everything that main.py (and any external callers) previously
+# imported directly from downloader.py.  This keeps backward compatibility
+# without any changes to main.py's import block.
+# ---------------------------------------------------------------------------
+__all__ = [
+    # paths / constants
+    "BASE_DIR",
+    "VIDEOS_DIR",
+    "LOGS_DIR",
+    "LINKS_FILE",
+    "HISTORY_FILE",
+    "METADATA_FILE",
+    "FAILED_FILE",
+    "LOG_FILE",
+    "MAX_RETRIES",
+    "RETRY_SLEEP",
+    # classes defined here
+    "Logger",
+    "Downloader",
+    # re-exported from metadata.py
+    "MetadataRecord",
+    "HistoryManager",
+    "MetadataManager",
+    # re-exported from ui.py
+    "ProgressTracker",
+]
 
 console: Console = Console()
 
@@ -53,6 +94,7 @@ console: Console = Console()
 # ===========================================================================
 # Logger
 # ===========================================================================
+
 
 class Logger:
     """
@@ -111,252 +153,9 @@ class Logger:
 
 
 # ===========================================================================
-# HistoryManager
-# ===========================================================================
-
-class HistoryManager:
-    """
-    Persists a JSON log of every completed download to *history.json*.
-
-    Schema (one entry per download)::
-
-        {
-          "url": "https://...",
-          "title": "Video title",
-          "filename": "3.mp4",
-          "downloaded_at": "2024-06-01T12:00:00+00:00",
-          "duration_seconds": 312,
-          "filesize_bytes": 48234567
-        }
-    """
-
-    def __init__(self, path: Path = HISTORY_FILE, logger: Optional[Logger] = None) -> None:
-        self._path = path
-        self._log = logger or Logger()
-        self._records: list[dict[str, Any]] = self._load()
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _load(self) -> list[dict[str, Any]]:
-        if not self._path.exists():
-            return []
-        try:
-            with self._path.open("r", encoding="utf-8") as fh:
-                data = json.load(fh)
-            if isinstance(data, list):
-                return data
-            self._log.warning("history.json has unexpected format; resetting.")
-            return []
-        except (json.JSONDecodeError, OSError) as exc:
-            self._log.error("Cannot read history file: %s", exc)
-            return []
-
-    def _save(self) -> None:
-        try:
-            with self._path.open("w", encoding="utf-8") as fh:
-                json.dump(self._records, fh, indent=2, ensure_ascii=False)
-        except OSError as exc:
-            self._log.error("Cannot write history file: %s", exc)
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
-    @property
-    def downloaded_urls(self) -> set[str]:
-        """Return the set of URLs that have already been downloaded."""
-        return {r["url"] for r in self._records}
-
-    def record(
-        self,
-        *,
-        url: str,
-        title: str,
-        filename: str,
-        duration_seconds: Optional[int] = None,
-        filesize_bytes: Optional[int] = None,
-    ) -> None:
-        """Append a successful download entry and persist to disk."""
-        entry: dict[str, Any] = {
-            "url": url,
-            "title": title,
-            "filename": filename,
-            "downloaded_at": datetime.now(tz=timezone.utc).isoformat(),
-            "duration_seconds": duration_seconds,
-            "filesize_bytes": filesize_bytes,
-        }
-        self._records.append(entry)
-        self._save()
-        self._log.debug("History updated: %s → %s", url, filename)
-
-    def all_records(self) -> list[dict[str, Any]]:
-        return list(self._records)
-
-
-# ===========================================================================
-# MetadataManager
-# ===========================================================================
-
-class MetadataManager:
-    """
-    Appends human-readable metadata blocks to *metadata.txt* after each
-    successful download.
-
-    Each block is separated by a line of dashes so the file stays readable
-    even when opened in a plain-text editor.
-    """
-
-    _SEPARATOR: str = "-" * 72
-
-    def __init__(self, path: Path = METADATA_FILE, logger: Optional[Logger] = None) -> None:
-        self._path = path
-        self._log = logger or Logger()
-
-    def append(self, info: dict[str, Any], filename: str) -> None:
-        """
-        Write a metadata block for a completed download.
-
-        Parameters
-        ----------
-        info:
-            The ``info_dict`` returned by yt-dlp after a successful download.
-        filename:
-            The final MP4 filename (e.g. ``"3.mp4"``).
-        """
-        lines: list[str] = [
-            self._SEPARATOR,
-            f"File       : {filename}",
-            f"Title      : {info.get('title', 'N/A')}",
-            f"URL        : {info.get('webpage_url', info.get('url', 'N/A'))}",
-            f"Uploader   : {info.get('uploader', 'N/A')}",
-            f"Upload Date: {self._fmt_date(info.get('upload_date'))}",
-            f"Duration   : {self._fmt_duration(info.get('duration'))}",
-            f"Views      : {info.get('view_count', 'N/A')}",
-            f"Likes      : {info.get('like_count', 'N/A')}",
-            f"Resolution : {info.get('resolution', 'N/A')}",
-            f"FPS        : {info.get('fps', 'N/A')}",
-            f"Saved At   : {datetime.now(tz=timezone.utc).isoformat()}",
-            "",
-        ]
-        try:
-            with self._path.open("a", encoding="utf-8") as fh:
-                fh.write("\n".join(lines))
-        except OSError as exc:
-            self._log.error("Cannot write metadata file: %s", exc)
-
-    # ------------------------------------------------------------------
-    # Formatting helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _fmt_date(upload_date: Optional[str]) -> str:
-        if not upload_date:
-            return "N/A"
-        try:
-            return datetime.strptime(upload_date, "%Y%m%d").strftime("%Y-%m-%d")
-        except ValueError:
-            return upload_date
-
-    @staticmethod
-    def _fmt_duration(seconds: Optional[int | float]) -> str:
-        if seconds is None:
-            return "N/A"
-        seconds = int(seconds)
-        h, rem = divmod(seconds, 3600)
-        m, s = divmod(rem, 60)
-        if h:
-            return f"{h}h {m:02d}m {s:02d}s"
-        return f"{m}m {s:02d}s"
-
-
-# ===========================================================================
-# ProgressTracker
-# ===========================================================================
-
-class ProgressTracker:
-    """
-    Wraps a Rich :class:`~rich.progress.Progress` bar and translates yt-dlp
-    progress hook dictionaries into Rich task updates.
-
-    Usage::
-
-        tracker = ProgressTracker()
-        with tracker:
-            ydl_opts["progress_hooks"] = [tracker.hook]
-            # … run yt-dlp …
-    """
-
-    def __init__(self) -> None:
-        self._progress: Progress = Progress(
-            SpinnerColumn(),
-            TextColumn("[bold cyan]{task.description}"),
-            BarColumn(bar_width=None),
-            DownloadColumn(),
-            TransferSpeedColumn(),
-            TimeRemainingColumn(),
-            console=console,
-            transient=True,
-        )
-        self._task_id: Optional[TaskID] = None
-        self._current_filename: str = ""
-
-    # ------------------------------------------------------------------
-    # Context manager
-    # ------------------------------------------------------------------
-
-    def __enter__(self) -> "ProgressTracker":
-        self._progress.__enter__()
-        return self
-
-    def __exit__(self, *args: Any) -> None:
-        self._progress.__exit__(*args)
-
-    # ------------------------------------------------------------------
-    # yt-dlp progress hook
-    # ------------------------------------------------------------------
-
-    def hook(self, d: dict[str, Any]) -> None:
-        """Called by yt-dlp with progress information."""
-        status: str = d.get("status", "")
-
-        if status == "downloading":
-            filename = Path(d.get("filename", "")).name
-            total = d.get("total_bytes") or d.get("total_bytes_estimate", 0)
-            downloaded = d.get("downloaded_bytes", 0)
-
-            if self._task_id is None or filename != self._current_filename:
-                # New file started (happens for each stream before merge).
-                if self._task_id is not None:
-                    self._progress.remove_task(self._task_id)
-                self._current_filename = filename
-                self._task_id = self._progress.add_task(
-                    description=f"[cyan]{filename}",
-                    total=total if total else None,
-                )
-
-            self._progress.update(
-                self._task_id,
-                completed=downloaded,
-                total=total if total else None,
-            )
-
-        elif status in ("finished", "error"):
-            if self._task_id is not None:
-                self._progress.remove_task(self._task_id)
-                self._task_id = None
-            self._current_filename = ""
-
-    def set_description(self, text: str) -> None:
-        """Update the description of the current active task."""
-        if self._task_id is not None:
-            self._progress.update(self._task_id, description=text)
-
-
-# ===========================================================================
 # Downloader
 # ===========================================================================
+
 
 class Downloader:
     """
@@ -367,9 +166,11 @@ class Downloader:
     3. For each URL, attempt up to ``MAX_RETRIES`` times via yt-dlp.
     4. Number output files sequentially, continuing from the highest
        existing number in *Videos/*.
-    5. On success  → update history + metadata.
-    6. On failure  → append to *failed.txt*.
-    7. Gracefully handle SIGINT (Ctrl+C).
+    5. Playlist entries each receive their own unique sequential number.
+    6. On success  → build :class:`~metadata.MetadataRecord` with final
+       on-disk metadata, update history + metadata.
+    7. On failure  → append to *failed.txt* with reason.
+    8. Gracefully handle SIGINT (Ctrl+C).
 
     Parameters
     ----------
@@ -377,6 +178,8 @@ class Downloader:
         Path to the plain-text file containing one YouTube URL per line.
     videos_dir:
         Directory where MP4 files are saved.
+    logger:
+        Optional :class:`Logger` instance; a new one is created if omitted.
     """
 
     def __init__(
@@ -414,8 +217,8 @@ class Downloader:
 
     def _load_urls(self) -> list[str]:
         """
-        Read *links.txt*, drop empty lines and duplicates, and return an
-        ordered list of URLs not yet present in download history.
+        Read *links.txt*, drop comments, empty lines and duplicates, and
+        return an ordered list of URLs not yet present in download history.
         """
         if not self._links_file.exists():
             self._log.warning("links.txt not found at %s", self._links_file)
@@ -458,6 +261,9 @@ class Downloader:
         """
         Return the next integer to use for output filenames by scanning
         *Videos/* for files matching the pattern ``<N>.mp4``.
+
+        Called once per individual video (including each playlist entry) so
+        that every output file receives a unique sequential number.
         """
         max_n: int = 0
         for entry in self._videos_dir.iterdir():
@@ -482,7 +288,8 @@ class Downloader:
         * Cookies/auth left to the user's environment.
         """
         return {
-            # Quality: best video merged with best audio, fallback to best single stream.
+            # Quality: best video merged with best audio, fallback to best
+            # single stream.
             "format": "bestvideo+bestaudio/best",
             # Output template: the caller already determined the final name.
             "outtmpl": str(output_path.with_suffix(".%(ext)s")),
@@ -525,7 +332,11 @@ class Downloader:
         progress_tracker: ProgressTracker,
     ) -> bool:
         """
-        Download a single URL (or playlist) with up to ``MAX_RETRIES`` attempts.
+        Download a single URL (or playlist) with up to ``MAX_RETRIES``
+        attempts.
+
+        For playlists, each entry is recorded separately with its own
+        unique sequential file number so that filenames are never reused.
 
         Returns ``True`` on success, ``False`` on permanent failure.
         """
@@ -533,6 +344,8 @@ class Downloader:
         output_path = self._videos_dir / output_stem  # ext added by yt-dlp
 
         ydl_opts = self._build_ydl_opts(output_path, progress_tracker)
+
+        last_error: str = "unknown error"
 
         for attempt in range(1, MAX_RETRIES + 1):
             if self._interrupted:
@@ -546,21 +359,55 @@ class Downloader:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info: dict[str, Any] = ydl.extract_info(url, download=True)
 
-                # yt-dlp may wrap playlist entries; unwrap if needed.
                 entries = info.get("entries")
                 if entries:
-                    # Playlist: record each entry individually.
-                    for entry in entries:
-                        if entry:
-                            self._on_success(url, entry, f"{output_stem}.mp4")
+                    # --------------------------------------------------------
+                    # Playlist: every entry gets its own unique file number.
+                    # The first entry reuses ``number`` (already allocated by
+                    # the caller); subsequent entries claim fresh numbers.
+                    # --------------------------------------------------------
+                    entry_number = number
+                    for idx, entry in enumerate(entries):
+                        if not entry:
+                            continue
+                        if idx > 0:
+                            # Allocate a new number for each additional entry.
+                            entry_number = self._next_number()
+                            console.print(
+                                f"  [dim]Playlist entry {idx + 1} → "
+                                f"[cyan]{entry_number}.mp4[/][/]"
+                            )
+                        entry_filename = f"{entry_number}.mp4"
+                        entry_path = self._videos_dir / entry_filename
+                        self._on_success(
+                            original_url=url,
+                            info=entry,
+                            file_number=entry_number,
+                            filename=entry_filename,
+                            final_path=entry_path,
+                        )
                 else:
-                    self._on_success(url, info, f"{output_stem}.mp4")
+                    # Single video.
+                    filename = f"{output_stem}.mp4"
+                    final_path = self._videos_dir / filename
+                    self._on_success(
+                        original_url=url,
+                        info=info,
+                        file_number=number,
+                        filename=filename,
+                        final_path=final_path,
+                    )
 
                 return True
 
             except yt_dlp.utils.DownloadError as exc:
+                last_error = str(exc)
                 self._log.error(
-                    "DownloadError on attempt %d for %s: %s", attempt, url, exc
+                    "DownloadError on attempt %d/%d for %s: %s",
+                    attempt,
+                    MAX_RETRIES,
+                    url,
+                    last_error,
                 )
                 if attempt < MAX_RETRIES:
                     console.print(
@@ -569,13 +416,29 @@ class Downloader:
                     )
                     time.sleep(RETRY_SLEEP)
                 else:
-                    console.print(f"  [bold red]✗  All retries exhausted for:[/] {url}")
+                    console.print(
+                        f"  [bold red]✗  All retries exhausted for:[/] {url}"
+                    )
 
             except Exception as exc:  # noqa: BLE001
-                self._log.exception("Unexpected error on attempt %d: %s", attempt, exc)
+                last_error = str(exc)
+                self._log.exception(
+                    "Unexpected error on attempt %d/%d for %s: %s",
+                    attempt,
+                    MAX_RETRIES,
+                    url,
+                    last_error,
+                )
                 if attempt < MAX_RETRIES:
                     time.sleep(RETRY_SLEEP)
 
+        # All attempts exhausted – record why.
+        self._log.error(
+            "FAILED after %d attempts for %s – reason: %s",
+            MAX_RETRIES,
+            url,
+            last_error,
+        )
         return False
 
     # ------------------------------------------------------------------
@@ -584,26 +447,65 @@ class Downloader:
 
     def _on_success(
         self,
-        url: str,
+        *,
+        original_url: str,
         info: dict[str, Any],
+        file_number: int,
         filename: str,
+        final_path: Optional[Path] = None,
     ) -> None:
-        title: str = info.get("title", "Unknown Title")
-        duration: Optional[int] = info.get("duration")
-        filesize: Optional[int] = info.get("filesize") or info.get("filesize_approx")
+        """
+        Build a :class:`~metadata.MetadataRecord` from the yt-dlp info dict
+        — using the finished on-disk file for accurate size/codec data —
+        then persist it to both *history.json* and *metadata.txt*.
 
-        self._history.record(
-            url=url,
-            title=title,
+        Parameters
+        ----------
+        original_url:
+            The URL submitted to the downloader (fallback when
+            ``info["webpage_url"]`` is absent).
+        info:
+            Raw yt-dlp ``info_dict`` for a single video.
+        file_number:
+            Sequential output number.
+        filename:
+            Final MP4 filename (e.g. ``"3.mp4"``).
+        final_path:
+            Absolute path to the finished file; used to read exact size.
+        """
+        meta = MetadataRecord.from_info(
+            info,
+            file_number=file_number,
             filename=filename,
-            duration_seconds=duration,
-            filesize_bytes=filesize,
+            url=original_url,
+            final_path=final_path,
         )
-        self._metadata.append(info, filename)
-        self._log.info("SUCCESS: %s → %s", url, filename)
+        self._history.record(meta)
+        self._metadata.append(meta)
 
-    def _on_failure(self, url: str) -> None:
-        self._log.error("FAILED: %s", url)
+        # Detailed success log line.
+        self._log.info(
+            "SUCCESS | #%d  %s | title=%r | channel=%r | video_id=%s"
+            " | duration=%s | size=%s",
+            meta.file_number,
+            meta.filename,
+            meta.title,
+            meta.channel,
+            meta.video_id or "N/A",
+            meta.duration_formatted,
+            meta.filesize_formatted,
+        )
+
+    def _on_failure(self, url: str, reason: str = "") -> None:
+        """
+        Append *url* to *failed.txt* and write a structured failure log
+        entry that includes the reason for the failure.
+        """
+        self._log.error(
+            "FAILED | url=%s%s",
+            url,
+            f" | reason={reason}" if reason else "",
+        )
         try:
             with FAILED_FILE.open("a", encoding="utf-8") as fh:
                 fh.write(url + "\n")
@@ -660,9 +562,7 @@ class Downloader:
                     self._on_failure(url)
                     console.print()  # visual spacing
 
-        # ------------------------------------------------------------------
         # Summary table
-        # ------------------------------------------------------------------
         self._print_summary(success_count, fail_count, total)
 
     # ------------------------------------------------------------------
@@ -679,7 +579,10 @@ class Downloader:
 
         table.add_row("Total queued", str(total))
         table.add_row("✔  Succeeded", f"[green]{success}[/]")
-        table.add_row("✗  Failed", f"[red]{failed}[/]" if failed else "[green]0[/]")
+        table.add_row(
+            "✗  Failed",
+            f"[red]{failed}[/]" if failed else "[green]0[/]",
+        )
         table.add_row("Output directory", str(self._videos_dir))
         table.add_row("Log file", str(LOG_FILE))
         if failed:
