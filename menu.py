@@ -10,10 +10,10 @@ Menu structure
 --------------
   1  Single Video Download   – paste a URL → choose folder → download
   2  Batch Download (.txt)   – pick a file → choose folder → download
-  3  History                 – delegates to CommandHistory.run()
-  4  Failed Downloads        – delegates to CommandFailed.run()
-  5  Settings                – change download folder, reset config
-  6  About                   – project info panel
+  3  Failed Downloads        – manage and retry failed downloads
+  4  Settings                – change download folder, reset config
+  5  About                   – project info panel
+  6  Channel Link Grabber    – collect all URLs from a channel
   7  Exit
 
 The folder-picker sub-menu appears before every download (single or batch)
@@ -40,11 +40,9 @@ import file_browser
 from app_config import DEFAULT_FOLDER, PRESET_FOLDERS, AppConfig
 from downloader import (
     FAILED_FILE,
-    HISTORY_FILE,
     LINKS_FILE,
     BASE_DIR,
     Downloader,
-    HistoryManager,
     Logger,
 )
 
@@ -552,41 +550,183 @@ def action_batch_download(cfg: AppConfig) -> None:
     _pause()
 
 
-def action_history() -> None:
+def _parse_selection(raw: str, max_idx: int) -> list[int]:
     """
-    Menu item 3 – History.
-    Delegates to CommandHistory (imported lazily to avoid circular imports).
-    """
-    # Lazy import: CommandHistory lives in main.py.
-    from main import CommandHistory  # noqa: PLC0415
+    Parse a user selection string like ``"1 3"`` or ``"2,4"`` into a
+    sorted, deduplicated list of zero-based indices.
 
-    console.print()
-    CommandHistory().run()
-    _pause()
+    Only values in the range [1, max_idx] are accepted; anything outside
+    that range is silently ignored.
+    """
+    indices: set[int] = set()
+    for token in raw.replace(",", " ").split():
+        if token.isdigit():
+            n = int(token)
+            if 1 <= n <= max_idx:
+                indices.add(n - 1)
+    return sorted(indices)
+
+
+def _write_failed(urls: list[str]) -> None:
+    """Overwrite failed.txt with *urls* (one per line). Creates or truncates."""
+    import os as _os
+    content = "\n".join(urls) + ("\n" if urls else "")
+    try:
+        with open(FAILED_FILE, "w", encoding="utf-8") as fh:
+            fh.write(content)
+            fh.flush()
+            _os.fsync(fh.fileno())
+    except OSError as exc:
+        console.print(f"[bold red]✗  Could not update failed list:[/] {exc}")
+        log.error("Failed-file write error: %s", exc)
 
 
 def action_failed() -> None:
     """
-    Menu item 4 – Failed Downloads.
-    Shows the table and asks whether to retry.
+    Menu item 3 – Failed Downloads.
+
+    Sub-options:
+        1  Retry All         – retry every URL in failed.txt
+        2  Retry Selected    – pick one or more URLs to retry
+        3  Delete Selected   – remove chosen URLs from failed.txt
+        4  Clear All         – empty failed.txt after confirmation
+        5  Back              – return to main menu
     """
-    from main import CommandFailed  # noqa: PLC0415
+    while True:
+        console.print()
+        console.print(Rule("[bold cyan]Failed Downloads[/]"))
+        console.print()
 
-    console.print()
-    urls = CommandFailed._load_failed_urls()
+        # ── Load current failed URLs ─────────────────────────────────────────
+        urls: list[str] = []
+        if FAILED_FILE.exists():
+            for line in FAILED_FILE.read_text(encoding="utf-8").splitlines():
+                u = line.strip()
+                if u:
+                    urls.append(u)
 
-    if not urls:
-        console.print("[bold green]✔  No failed URLs.[/]")
-        _pause()
-        return
+        if not urls:
+            console.print("[bold green]✔  No failed downloads.[/]")
+            _pause()
+            return
 
-    CommandFailed._print_table(urls)
+        # ── Show the failed URLs table ───────────────────────────────────────
+        url_table = Table(box=box.SIMPLE, show_header=True, pad_edge=False)
+        url_table.add_column("  #", style="bold cyan", justify="right", min_width=3)
+        url_table.add_column("  URL", style="white")
+        for i, u in enumerate(urls, start=1):
+            url_table.add_row(str(i), u)
+        console.print(url_table)
+        console.print()
 
-    answer = _prompt("Retry all failed downloads? [y/N]", default="n").lower()
-    if answer in ("y", "yes"):
-        CommandFailed().run(retry=True)
+        # ── Action menu ──────────────────────────────────────────────────────
+        action_table = Table(box=box.SIMPLE, show_header=False, pad_edge=False)
+        action_table.add_column("  #", style="bold cyan", justify="right", min_width=3)
+        action_table.add_column("  Option", style="white")
+        action_table.add_row("1", "Retry All")
+        action_table.add_row("2", "Retry Selected")
+        action_table.add_row("3", "Delete Selected")
+        action_table.add_row("4", "Clear All")
+        action_table.add_row("5", "Back")
+        console.print(action_table)
+        console.print()
 
-    _pause()
+        while True:
+            choice = _prompt("Choose option [1–5]")
+            if choice in ("1", "2", "3", "4", "5"):
+                break
+            console.print("[yellow]  Please enter a number between 1 and 5.[/]")
+
+        # ── 1: Retry All ─────────────────────────────────────────────────────
+        if choice == "1":
+            log.info("Failed downloads: retrying all %d URL(s)", len(urls))
+            try:
+                downloader = Downloader(links_file=FAILED_FILE, videos_dir=None)
+                downloader.run()
+            except Exception as exc:  # noqa: BLE001
+                console.print(f"[bold red]✗  Retry failed:[/] {exc}")
+                log.exception("Retry-all error: %s", exc)
+            _pause()
+
+        # ── 2: Retry Selected ────────────────────────────────────────────────
+        elif choice == "2":
+            console.print(
+                "  Enter the number(s) to retry, separated by spaces or commas."
+            )
+            console.print(f"  [dim](e.g. 1  or  1,3  or  2 4)[/]")
+            console.print()
+            selected = _parse_selection(_prompt("URL number(s)"), len(urls))
+            if not selected:
+                console.print("[yellow]  No valid selection – returning to menu.[/]")
+            else:
+                chosen = [urls[i] for i in selected]
+                console.print(
+                    f"  Retrying [cyan]{len(chosen)}[/] URL(s)…"
+                )
+                tmp_file: Optional[Path] = None
+                try:
+                    fd, tmp_str = tempfile.mkstemp(
+                        prefix=".ytdl_retry_", suffix=".txt", dir=BASE_DIR
+                    )
+                    tmp_file = Path(tmp_str)
+                    with open(fd, "w", encoding="utf-8") as fh:
+                        fh.write("\n".join(chosen) + "\n")
+                    log.info(
+                        "Failed downloads: retrying selected %d URL(s)", len(chosen)
+                    )
+                    downloader = Downloader(links_file=tmp_file, videos_dir=None)
+                    downloader.run()
+                except Exception as exc:  # noqa: BLE001
+                    console.print(f"[bold red]✗  Retry failed:[/] {exc}")
+                    log.exception("Retry-selected error: %s", exc)
+                finally:
+                    if tmp_file is not None:
+                        try:
+                            tmp_file.unlink(missing_ok=True)
+                        except OSError:
+                            pass
+            _pause()
+
+        # ── 3: Delete Selected ───────────────────────────────────────────────
+        elif choice == "3":
+            console.print(
+                "  Enter the number(s) to delete, separated by spaces or commas."
+            )
+            console.print(f"  [dim](e.g. 1  or  1,3  or  2 4)[/]")
+            console.print()
+            selected = _parse_selection(_prompt("URL number(s)"), len(urls))
+            if not selected:
+                console.print("[yellow]  No valid selection – nothing deleted.[/]")
+            else:
+                keep = [u for i, u in enumerate(urls) if i not in selected]
+                _write_failed(keep)
+                removed = len(urls) - len(keep)
+                console.print(
+                    f"  [green]✔[/]  Deleted [cyan]{removed}[/] URL(s) from failed list."
+                )
+                log.info("Failed downloads: deleted %d URL(s)", removed)
+                if not keep:
+                    _pause()
+                    return
+
+        # ── 4: Clear All ─────────────────────────────────────────────────────
+        elif choice == "4":
+            console.print()
+            answer = _prompt(
+                f"Clear all {len(urls)} failed URL(s)? [y/N]", default="n"
+            ).lower()
+            if answer in ("y", "yes"):
+                _write_failed([])
+                console.print("[green]✔  Failed downloads cleared.[/]")
+                log.info("Failed downloads: cleared all %d URL(s)", len(urls))
+                _pause()
+                return
+            else:
+                console.print("[dim]  Cancelled.[/]")
+
+        # ── 5: Back ──────────────────────────────────────────────────────────
+        elif choice == "5":
+            return
 
 
 def action_settings(cfg: AppConfig) -> None:
@@ -699,6 +839,15 @@ def action_about() -> None:
     _pause()
 
 
+def action_channel_grabber(cfg: AppConfig) -> None:
+    """
+    Menu item 7 – Channel Link Grabber.
+    Delegates entirely to channel_grabber.run().
+    """
+    from channel_grabber import run
+    run(cfg)
+
+
 # ===========================================================================
 # Main menu loop
 # ===========================================================================
@@ -706,16 +855,6 @@ def action_about() -> None:
 
 def _build_menu_table(cfg: AppConfig) -> Table:
     """Render the numbered menu as a Rich table."""
-    folder_label = str(cfg.last_download_folder or DEFAULT_FOLDER)
-
-    # Truncate long paths for display.
-    if len(folder_label) > 48:
-        folder_label = "…" + folder_label[-47:]
-
-    history = HistoryManager()
-    records = history.all_records()
-    history_count = len(records)
-
     failed_count = (
         sum(
             1
@@ -741,16 +880,14 @@ def _build_menu_table(cfg: AppConfig) -> Table:
     )
     table.add_column("  #", style="bold cyan", justify="right", min_width=4)
     table.add_column("  Menu Item", style="white", min_width=36)
-    table.add_column("  Info", style="dim", min_width=0)
 
-    table.add_row("1", "Single Video Download", "")
-    links_label = cfg.last_links_file.name if cfg.last_links_file else "not selected"
-    table.add_row("2", "Batch Download (.txt)", f"file: {links_label}")
-    table.add_row("3", "History", f"{history_count} record(s)")
-    table.add_row("4", failed_label, "")
-    table.add_row("5", "Settings", f"folder: {folder_label}")
-    table.add_row("6", "About", "")
-    table.add_row("7", "Exit", "")
+    table.add_row("1", "Single Video Download")
+    table.add_row("2", "Batch Download (.txt)")
+    table.add_row("3", failed_label)
+    table.add_row("4", "Settings")
+    table.add_row("5", "About")
+    table.add_row("6", "Channel Link Grabber")
+    table.add_row("7", "Exit")
 
     return table
 
@@ -782,16 +919,16 @@ def run_menu() -> None:
             action_batch_download(cfg)
 
         elif raw == "3":
-            action_history()
-
-        elif raw == "4":
             action_failed()
 
-        elif raw == "5":
+        elif raw == "4":
             action_settings(cfg)
 
-        elif raw == "6":
+        elif raw == "5":
             action_about()
+
+        elif raw == "6":
+            action_channel_grabber(cfg)
 
         elif raw == "7":
             console.print("\n[bold cyan]Goodbye![/]\n")
