@@ -194,10 +194,13 @@ class Downloader:
         links_file: Path = LINKS_FILE,
         videos_dir: Path = VIDEOS_DIR,
         logger: Optional[Logger] = None,
+        quality: Optional[str] = None,
     ) -> None:
         self._links_file = links_file
         self._videos_dir = videos_dir
         self._log = logger or Logger()
+        # None or "best" → best available; "720p", "1080p", etc. → specific height
+        self._quality: Optional[str] = quality
         self._history = HistoryManager(logger=self._log)
         self._metadata = MetadataManager(logger=self._log, videos_dir=self._videos_dir)
         self._excel_metadata = ExcelMetadataManager(logger=self._log, videos_dir=self._videos_dir)
@@ -209,6 +212,116 @@ class Downloader:
 
         # Register graceful Ctrl+C handler.
         signal.signal(signal.SIGINT, self._handle_sigint)
+
+    # ------------------------------------------------------------------
+    # Quality helpers
+    # ------------------------------------------------------------------
+
+    # Standard heights shown to the user, in descending order.
+    _STANDARD_HEIGHTS: tuple[int, ...] = (2160, 1440, 1080, 720, 480, 360, 240, 144)
+
+    @staticmethod
+    def fetch_resolutions(url: str) -> list[int]:
+        """
+        Return available standard resolution labels for *url*, sorted descending.
+
+        Works correctly for both normal (landscape) and vertical (Shorts) videos.
+
+        For any video format, yt-dlp populates both ``width`` and ``height``.
+        The standard p-label (480p, 720p …) always corresponds to the SHORT
+        side of the frame:
+          - Landscape  1920×1080  → short side = 1080  → 1080p  ✓
+          - Vertical    1080×1920  → short side = 1080  → 1080p  ✓
+          - Vertical     480×854   → short side =  480  → 480p   ✓
+
+        So ``min(width, height)`` gives the correct p-label for every
+        orientation, replacing the old ``height``-only logic that returned
+        WIDTH values for vertical videos (e.g. 1920 instead of 1080).
+
+        Inclusion criteria (ALL must hold):
+          - ``vcodec`` is present and not ``"none"``  (real video track)
+          - ``min(width, height)`` maps to a value in ``_STANDARD_HEIGHTS``
+
+        Exclusion criteria (ANY triggers a skip):
+          - ``ext`` is an image type (jpg, jpeg, png, webp, gif)
+          - ``format_id`` or ``format_note`` contains ``"storyboard"``
+          - ``format_id`` starts with ``"sb"``
+
+        Returns [] if the URL cannot be probed.
+        """
+        _STANDARD = Downloader._STANDARD_HEIGHTS
+        _IMAGE_EXTS = {"jpg", "jpeg", "png", "webp", "gif"}
+        seen: set[int] = set()
+        ydl_opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "format": "all",
+        }
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                if not info:
+                    return []
+                for fmt in (info.get("formats") or []):
+                    # Skip image-only formats (thumbnails).
+                    if fmt.get("ext") in _IMAGE_EXTS:
+                        continue
+
+                    # Must have a real video codec — excludes audio-only.
+                    vcodec = fmt.get("vcodec") or "none"
+                    if vcodec == "none":
+                        continue
+
+                    # Exclude storyboard / thumbnail sprite tracks.
+                    fmt_id   = (fmt.get("format_id")  or "").lower()
+                    fmt_note = (fmt.get("format_note") or "").lower()
+                    if (
+                        "storyboard" in fmt_id
+                        or "storyboard" in fmt_note
+                        or fmt_id.startswith("sb")
+                    ):
+                        continue
+
+                    # Use min(width, height) so both landscape and vertical
+                    # videos produce the correct standard p-label.
+                    try:
+                        w = int(fmt.get("width")  or 0)
+                        h = int(fmt.get("height") or 0)
+                    except (TypeError, ValueError):
+                        continue
+                    if w <= 0 or h <= 0:
+                        continue
+                    short = min(w, h)
+                    if short in _STANDARD:
+                        seen.add(short)
+
+        except Exception:  # noqa: BLE001
+            pass
+        return sorted(seen, reverse=True)
+
+    def _build_format_string(self, height: int) -> str:
+        """
+        Build a yt-dlp format selector for a target resolution label.
+
+        ``height`` here is the short-side value chosen by the user (e.g. 720
+        for "720p").  For landscape videos the short side is ``height``; for
+        vertical videos it is ``width``.  We request both so yt-dlp matches
+        whichever orientation the video actually is, then fall through lower
+        resolutions and finally to the global best.
+        """
+        steps = [height]
+        for h in [2160, 1440, 1080, 720, 480, 360, 240, 144]:
+            if h < height:
+                steps.append(h)
+        # For each target, accept the format if either the height or the
+        # width matches — covers landscape and vertical in one selector.
+        parts = [
+            f"bestvideo[height={h}]+bestaudio/bestvideo[width={h}]+bestaudio"
+            for h in steps
+        ]
+        parts.append("bestvideo+bestaudio/best")
+        return "/".join(parts)
 
     # ------------------------------------------------------------------
     # Signal handling
@@ -295,10 +408,19 @@ class Downloader:
         * ``ffmpeg`` postprocessor merges streams into MP4.
         * Cookies/auth left to the user's environment.
         """
+        # Determine format string based on quality setting.
+        if self._quality and self._quality != "best":
+            try:
+                height = int(self._quality.lower().rstrip("p"))
+                fmt_string = self._build_format_string(height)
+            except (ValueError, AttributeError):
+                fmt_string = "bestvideo+bestaudio/best"
+        else:
+            fmt_string = "bestvideo+bestaudio/best"
+
         return {
-            # Quality: best video merged with best audio, fallback to best
-            # single stream.
-            "format": "bestvideo+bestaudio/best",
+            # Quality: derived from user choice or best available.
+            "format": fmt_string,
             # Output template: the caller already determined the final name.
             "outtmpl": str(output_path.with_suffix(".%(ext)s")),
             # Merge everything into MP4.

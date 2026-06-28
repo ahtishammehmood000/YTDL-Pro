@@ -317,6 +317,98 @@ def pick_folder(cfg: AppConfig) -> Path:
 
 
 # ===========================================================================
+# Quality picker
+# ===========================================================================
+
+_RESOLUTION_LABELS: dict[int, str] = {
+    2160: "2160p (4K)",
+    1440: "1440p (2K)",
+    1080: "1080p (Full HD)",
+    720: "720p (HD)",
+    480: "480p (SD)",
+    360: "360p",
+    240: "240p",
+    144: "144p",
+}
+
+
+def _pick_quality(url_for_probe: Optional[str] = None) -> Optional[str]:
+    """
+    Show the Download Quality step and return a quality string.
+
+    Returns
+    -------
+    str or None
+        ``None``       → use best available (no change to existing behaviour)
+        ``"1080p"``    → specific resolution string understood by Downloader
+    """
+    console.print()
+    console.print(Rule("[bold cyan]Download Quality[/]"))
+    console.print()
+
+    q_table = Table(box=box.SIMPLE, show_header=False, pad_edge=False)
+    q_table.add_column("  #", style="bold cyan", justify="right", min_width=3)
+    q_table.add_column("  Option", style="white")
+
+    q_table.add_row("1", "Best Available  [dim](Recommended)[/]")
+    q_table.add_row("2", "Choose Specific Quality")
+    console.print(q_table)
+    console.print()
+
+    while True:
+        choice = _prompt("Choose quality option [1–2]")
+        if choice in ("1", "2"):
+            break
+        console.print("[yellow]  Please enter 1 or 2.[/]")
+
+    if choice == "1":
+        console.print("[dim]  Using best available quality.[/]\n")
+        return None
+
+    # ---- Specific quality path ----
+    if url_for_probe is None:
+        console.print(
+            "[yellow]  Cannot fetch resolutions without a URL – "
+            "defaulting to best available.[/]\n"
+        )
+        return None
+
+    console.print("[dim]  Fetching available resolutions…[/]")
+    heights = Downloader.fetch_resolutions(url_for_probe)
+
+    if not heights:
+        console.print(
+            "[yellow]  Could not retrieve resolutions – "
+            "defaulting to best available.[/]\n"
+        )
+        return None
+
+    console.print()
+    res_table = Table(box=box.SIMPLE, show_header=False, pad_edge=False)
+    res_table.add_column("  #", style="bold cyan", justify="right", min_width=3)
+    res_table.add_column("  Resolution", style="white")
+
+    for i, h in enumerate(heights, start=1):
+        label = _RESOLUTION_LABELS.get(h, f"{h}p")
+        res_table.add_row(str(i), label)
+
+    console.print(res_table)
+    console.print()
+
+    n = len(heights)
+    while True:
+        raw = _prompt(f"Choose resolution [1–{n}]")
+        if raw.isdigit():
+            idx = int(raw) - 1
+            if 0 <= idx < n:
+                chosen_height = heights[idx]
+                chosen_label = _RESOLUTION_LABELS.get(chosen_height, f"{chosen_height}p")
+                console.print(f"[dim]  Selected: {chosen_label}[/]\n")
+                return f"{chosen_height}p"
+        console.print(f"[yellow]  Please enter a number between 1 and {n}.[/]")
+
+
+# ===========================================================================
 # Menu actions
 # ===========================================================================
 
@@ -344,6 +436,8 @@ def action_single_video(cfg: AppConfig) -> None:
         _pause()
         return
 
+    quality = _pick_quality(url_for_probe=url)
+
     folder = pick_folder(cfg)
 
     # Write the single URL to a temporary file so Downloader can read it.
@@ -355,7 +449,7 @@ def action_single_video(cfg: AppConfig) -> None:
             fh.write(url + "\n")
 
         log.info("Single-video download: %s → %s", url, folder)
-        downloader = Downloader(links_file=tmp_file, videos_dir=folder)
+        downloader = Downloader(links_file=tmp_file, videos_dir=folder, quality=quality)
         downloader.run()
 
     except Exception as exc:  # noqa: BLE001
@@ -430,11 +524,26 @@ def action_batch_download(cfg: AppConfig) -> None:
     console.print(f"  [green]✔  Using:[/] [cyan]{links_path}[/]")
     console.print()
 
+    # Quality selection – asked once, applied to every URL in the batch.
+    # Probe the first URL in the file so we can show real resolutions.
+    _probe_url: Optional[str] = None
+    try:
+        with links_path.open("r", encoding="utf-8") as _fh:
+            for _line in _fh:
+                _u = _line.strip()
+                if _u and not _u.startswith("#"):
+                    _probe_url = _u
+                    break
+    except OSError:
+        pass
+
+    quality = _pick_quality(url_for_probe=_probe_url)
+
     folder = pick_folder(cfg)
 
     log.info("Batch download: file=%s → folder=%s", links_path, folder)
     try:
-        downloader = Downloader(links_file=links_path, videos_dir=folder)
+        downloader = Downloader(links_file=links_path, videos_dir=folder, quality=quality)
         downloader.run()
     except Exception as exc:  # noqa: BLE001
         console.print(f"[bold red]✗  Download failed:[/] {exc}")

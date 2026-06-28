@@ -112,3 +112,319 @@ Saved At   : 2026-06-27T16:35:54.332872+00:00
   Download Status  : success
 
 ========================================================================
+========================================================================
+  YTDL-Pro  |  Download Record
+========================================================================
+
+  General Information
+------------------------------------------------------------------------
+  File Number      : 1
+  Filename         : 1.mp4
+  Original URL     : https://www.youtube.com/watch?v=Dq18ofjWflw
+
+  Video Information
+------------------------------------------------------------------------
+  Title            : Rukh E Mustafa Wo Kitaab Ha✨❣️ #islamicvideo #short
+  Channel          : ℕ𝕠𝕠𝕣 𝕖 𝕀𝕤𝕝𝕒𝕞💫
+  Channel ID       : UCsxAmeynv8V0qybYla1fjKQ
+  Video ID         : Dq18ofjWflw
+  Upload Date      : 2026-06-27
+  Upload Timestamp : 1782604623
+  Thumbnail URL    : https://i.ytimg.com/vi_webp/Dq18ofjWflw/maxresdefault.webp
+
+  Technical Information
+------------------------------------------------------------------------
+  Duration         : 0m 35s
+  Duration (sec)   : 35
+  Resolution       : 720x1280
+  FPS              : 30.0
+  Video Codec      : av01.0.05M.08
+  Audio Codec      : opus
+  File Size        : 3.43 MB
+  File Size (bytes): 3596329
+
+  Hashtags
+------------------------------------------------------------------------
+  N/A
+
+  Description
+------------------------------------------------------------------------
+  (no description)
+
+  Download Information
+------------------------------------------------------------------------
+  Downloaded At    : 2026-06-28T00:35:18.147670+00:00
+  Download Status  : success
+
+========================================================================
+========================================================================
+  YTDL-Pro  |  Download Record
+========================================================================
+
+  General Information
+------------------------------------------------------------------------
+  File Number      : 1
+  Filename         : 1.mp4
+  Original URL     : https://www.youtube.com/watch?v=lfsHmeC70ok
+
+  Video Information
+------------------------------------------------------------------------
+  Title            : Madina Shareef 🕌
+  Channel          : Madani Vlog
+  Channel ID       : UCw7b9SCkSz9aK00LB_QfLDQ
+  Video ID         : lfsHmeC70ok
+  Upload Date      : 2025-07-25
+  Upload Timestamp : 1753484633
+  Thumbnail URL    : https://i.ytimg.com/vi_webp/lfsHmeC70ok/maxresdefault.webp
+
+  Technical Information
+------------------------------------------------------------------------
+  Duration         : 0m 40s
+  Duration (sec)   : 40
+  Resolution       : 1080x1920
+  FPS              : 30.0
+  Video Codec      : av01.0.08M.08.0.110.05.01.06.0
+  Audio Codec      : opus
+  File Size        : 9.79 MB
+  File Size (bytes): 10262278
+
+  Hashtags
+------------------------------------------------------------------------
+  N/A
+
+  Description
+------------------------------------------------------------------------
+  (no description)
+
+  Download Information
+------------------------------------------------------------------------
+  Downloaded At    : 2026-06-28T00:45:11.364625+00:00
+  Download Status  : success
+
+========================================================================
+========================================================================
+  YTDL-Pro  |  Download Record
+========================================================================
+
+  General Information
+------------------------------------------------------------------------
+  File Number      : 2
+  Filename         : 2.mp4
+  Original URL     : https://www.youtube.com/watch?v=X5p55LLXr6I
+
+  Video Information
+------------------------------------------------------------------------
+  Title            : Jacob Witzling's Axe Skills #fyp #skills #axe #foryou
+  Channel          : Kym Ameh
+  Channel ID       : UCsvZw9I2omT403hyHf69qSA
+  Video ID         : X5p55LLXr6I
+  Upload Date      : 2026-05-12
+  Upload Timestamp : 1778557448
+  Thumbnail URL    : https://i.ytimg.com/vi_webp/X5p55LLXr6I/maxresdefault.webp
+
+  Technical Information
+------------------------------------------------------------------------
+  Duration         : 0m 54s
+  Duration (sec)   : 54
+  Resolution       : 1080x1920
+  FPS              : 30.0
+  Video Codec      : av01.0.08M.08
+  Audio Codec      : opus
+  File Size        : 15.71 MB
+  File Size (bytes): 16468626
+
+  Hashtags
+------------------------------------------------------------------------
+  N/A
+
+  Description
+------------------------------------------------------------------------
+  (no description)
+
+  Download Information
+------------------------------------------------------------------------
+  Downloaded At    : 2026-06-28T00:48:02.202733+00:00
+  Download Status  : success
+
+========================================================================
+========================================================================
+  YTDL-Pro  |  Download Record
+========================================================================
+
+  General Information
+------------------------------------------------------------------------
+  File Number      : 1
+  Filename         : 1.mp4
+  Original URL     : https://www.youtube.com/watch?v=X5p55LLXr6I
+
+  Video Information
+------------------------------------------------------------------------
+  Title            : Jacob Witzling's Axe Skills #fyp #skills #axe #foryou
+  Channel          : Kym Ameh
+  Channel ID       : UCsvZw9I2omT403hyHf69qSA
+  Video ID         : X5p55LLXr6I
+  Upload Date      : 2026-05-12
+  Upload Timestamp : 1778557448
+  Thumbnail URL    : https://i.ytimg.com/vi_webp/X5p55LLXr6I/maxresdefault.webp
+
+  Technical Information
+------------------------------------------------------------------------
+  Duration         : 0m 54s
+  Duration (sec)   : 54
+  Resolution       : 1080x1920
+  FPS              : 30.0
+  Video Codec      : av01.0.08M.08
+  Audio Codec      : opus
+  File Size        : 15.71 MB
+  File Size (bytes): 16468626
+
+  Hashtags
+------------------------------------------------------------------------
+  N/A
+
+  Description
+------------------------------------------------------------------------
+  (no description)
+
+  Download Information
+------------------------------------------------------------------------
+  Downloaded At    : 2026-06-28T00:57:27.703153+00:00
+  Download Status  : success
+
+========================================================================
+========================================================================
+  YTDL-Pro  |  Download Record
+========================================================================
+
+  General Information
+------------------------------------------------------------------------
+  File Number      : 1
+  Filename         : 1.mp4
+  Original URL     : https://www.youtube.com/watch?v=peCBo05byNo
+
+  Video Information
+------------------------------------------------------------------------
+  Title            : Golden frame M92 #airsoftgun
+  Channel          : TOY ZILLA 
+  Channel ID       : UCDdwLmAOeUwPBhZePmNEC2g
+  Video ID         : peCBo05byNo
+  Upload Date      : 2026-01-28
+  Upload Timestamp : 1769614230
+  Thumbnail URL    : https://i.ytimg.com/vi_webp/peCBo05byNo/maxresdefault.webp
+
+  Technical Information
+------------------------------------------------------------------------
+  Duration         : 0m 24s
+  Duration (sec)   : 24
+  Resolution       : 2160x3840
+  FPS              : 60.0
+  Video Codec      : av01.0.13M.08
+  Audio Codec      : opus
+  File Size        : 39.35 MB
+  File Size (bytes): 41266305
+
+  Hashtags
+------------------------------------------------------------------------
+  N/A
+
+  Description
+------------------------------------------------------------------------
+  Disclaimer:
+  This is an airsoft replica, not a real firearm. Airsoft is a legal sport played with proper safety measures. This video is for educational and informational purposes only.
+
+  Download Information
+------------------------------------------------------------------------
+  Downloaded At    : 2026-06-28T01:17:47.021362+00:00
+  Download Status  : success
+
+========================================================================
+========================================================================
+  YTDL-Pro  |  Download Record
+========================================================================
+
+  General Information
+------------------------------------------------------------------------
+  File Number      : 1
+  Filename         : 1.mp4
+  Original URL     : https://www.youtube.com/watch?v=X5p55LLXr6I
+
+  Video Information
+------------------------------------------------------------------------
+  Title            : Jacob Witzling's Axe Skills #fyp #skills #axe #foryou
+  Channel          : Kym Ameh
+  Channel ID       : UCsvZw9I2omT403hyHf69qSA
+  Video ID         : X5p55LLXr6I
+  Upload Date      : 2026-05-12
+  Upload Timestamp : 1778557448
+  Thumbnail URL    : https://i.ytimg.com/vi_webp/X5p55LLXr6I/maxresdefault.webp
+
+  Technical Information
+------------------------------------------------------------------------
+  Duration         : 0m 54s
+  Duration (sec)   : 54
+  Resolution       : 1080x1920
+  FPS              : 30.0
+  Video Codec      : av01.0.08M.08
+  Audio Codec      : opus
+  File Size        : 15.71 MB
+  File Size (bytes): 16468626
+
+  Hashtags
+------------------------------------------------------------------------
+  N/A
+
+  Description
+------------------------------------------------------------------------
+  (no description)
+
+  Download Information
+------------------------------------------------------------------------
+  Downloaded At    : 2026-06-28T01:18:58.218856+00:00
+  Download Status  : success
+
+========================================================================
+========================================================================
+  YTDL-Pro  |  Download Record
+========================================================================
+
+  General Information
+------------------------------------------------------------------------
+  File Number      : 2
+  Filename         : 2.mp4
+  Original URL     : https://www.youtube.com/watch?v=swknsQPOuJw
+
+  Video Information
+------------------------------------------------------------------------
+  Title            : Just saving lives 💙 #heartattack #help #foryou#firefighter#usa
+  Channel          : Adam12
+  Channel ID       : UCe23B7bBR5vSS8CmioyVYjQ
+  Video ID         : swknsQPOuJw
+  Upload Date      : 2026-03-27
+  Upload Timestamp : 1774606420
+  Thumbnail URL    : https://i.ytimg.com/vi_webp/swknsQPOuJw/maxresdefault.webp
+
+  Technical Information
+------------------------------------------------------------------------
+  Duration         : 0m 59s
+  Duration (sec)   : 59
+  Resolution       : 1080x1920
+  FPS              : 30.0
+  Video Codec      : av01.0.08M.08
+  Audio Codec      : opus
+  File Size        : 9.04 MB
+  File Size (bytes): 9477436
+
+  Hashtags
+------------------------------------------------------------------------
+  N/A
+
+  Description
+------------------------------------------------------------------------
+  (no description)
+
+  Download Information
+------------------------------------------------------------------------
+  Downloaded At    : 2026-06-28T01:19:05.887751+00:00
+  Download Status  : success
+
+========================================================================
