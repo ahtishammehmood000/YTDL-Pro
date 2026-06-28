@@ -160,6 +160,39 @@ class Logger:
 
 
 # ===========================================================================
+# yt-dlp logger shim
+# ===========================================================================
+
+
+class _YtdlpLogger:
+    """
+    Minimal logger shim passed to yt-dlp via the ``"logger"`` option.
+
+    Forwards every message to the application logger unchanged, except for
+    the "No supported JavaScript runtime could be found" warning which is
+    a harmless environment notice that pollutes the terminal output.  All
+    genuine download errors and warnings remain fully visible.
+    """
+
+    _SUPPRESSED = "No supported JavaScript runtime could be found"
+
+    def debug(self, msg: str) -> None:
+        # yt-dlp sends info-level messages through debug(); ignore them.
+        pass
+
+    def info(self, msg: str) -> None:
+        pass
+
+    def warning(self, msg: str) -> None:
+        if self._SUPPRESSED in msg:
+            return
+        console.print(f"[yellow]  yt-dlp warning:[/] {msg}")
+
+    def error(self, msg: str) -> None:
+        console.print(f"[bold red]  yt-dlp error:[/] {msg}")
+
+
+# ===========================================================================
 # Downloader
 # ===========================================================================
 
@@ -439,6 +472,9 @@ class Downloader:
             # Suppress yt-dlp's own stdout chatter; we handle output via Rich.
             "quiet": True,
             "no_warnings": False,
+            # Route yt-dlp warnings through our shim so the JS-runtime notice
+            # is suppressed while all real errors remain visible.
+            "logger": _YtdlpLogger(),
             # Write thumbnail – useful for metadata; skip on error.
             "writethumbnail": False,
             # Support playlists (individual URLs work too).

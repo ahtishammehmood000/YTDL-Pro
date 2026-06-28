@@ -14,7 +14,8 @@ Menu structure
   4  Settings                – change download folder, reset config
   5  About                   – project info panel
   6  Channel Link Grabber    – collect all URLs from a channel
-  7  Exit
+  7  Channel Downloader      – download an entire channel directly
+  8  Exit
 
 The folder-picker sub-menu appears before every download (single or batch)
 **unless** a folder is already stored in config.json, in which case it is
@@ -37,7 +38,7 @@ from rich.table import Table
 from rich.text import Text
 
 import file_browser
-from app_config import DEFAULT_FOLDER, PRESET_FOLDERS, AppConfig
+from app_config import DEFAULT_FOLDER, AppConfig
 from downloader import (
     FAILED_FILE,
     LINKS_FILE,
@@ -45,6 +46,9 @@ from downloader import (
     Downloader,
     Logger,
 )
+from settings import run as settings_menu
+from about import run as about_menu
+from download_ui import pick_folder, pick_quality as _pick_quality
 
 console: Console = Console()
 log: Logger = Logger()
@@ -215,195 +219,14 @@ def _prompt_txt_file(prompt_label: str, default: Path) -> Path:
 # ===========================================================================
 
 
-def pick_folder(cfg: AppConfig) -> Path:
-    """
-    Show the destination picker and return the chosen folder.
-
-    The picker is **always** displayed so the user consciously selects where
-    each batch lands.  The last-used folder (if any) appears as option 1 so
-    it can be re-selected with a single keystroke.
-
-    Menu layout
-    -----------
-    When a folder has been used before::
-
-        1  Last Used  (/storage/emulated/0/Movies)
-        2  Movies     (/storage/emulated/0/Movies)
-        3  Downloads  (/storage/emulated/0/Download)
-        4  Custom path…
-
-    On first run (no stored folder)::
-
-        1  Movies     (/storage/emulated/0/Movies)
-        2  Downloads  (/storage/emulated/0/Download)
-        3  Custom path…
-
-    Choosing "Custom path…" launches the interactive terminal file
-    browser (see file_browser.py) instead of a raw typed-path prompt.
-
-    The chosen folder is saved into *cfg* and persisted to ``config.json``
-    before this function returns.
-
-    Returns
-    -------
-    Path
-        Absolute path to the chosen (and created) directory.
-    """
-    console.print()
-    console.print(Rule("[bold cyan]Download Destination[/]"))
-    console.print()
-
-    # Build option list.  "Last Used" is prepended when a folder is stored.
-    options: list[tuple[str, Path | None]] = []
-
-    if cfg.last_download_folder is not None:
-        label = str(cfg.last_download_folder)
-        if len(label) > 52:
-            label = "…" + label[-51:]
-        options.append((f"Last Used  ({label})", cfg.last_download_folder))
-
-    for name, path in PRESET_FOLDERS.items():
-        options.append((f"{name}  ({path})", path))
-
-    options.append(("Custom path…", None))
-
-    # Render the table.
-    table = Table(box=box.SIMPLE, show_header=False, pad_edge=False)
-    table.add_column("  #", style="bold cyan", justify="right", min_width=3)
-    table.add_column("  Location", style="white")
-
-    for i, (label, _) in enumerate(options, start=1):
-        table.add_row(str(i), label)
-
-    console.print(table)
-    console.print()
-
-    # Prompt until a valid choice is made.
-    n = len(options)
-    while True:
-        raw = _prompt(f"Choose destination [1–{n}]")
-        if raw.isdigit():
-            idx = int(raw) - 1
-            if 0 <= idx < n:
-                _, chosen_path = options[idx]
-                break
-        console.print(f"[yellow]  Please enter a number between 1 and {n}.[/]")
-
-    # Handle custom path entry via the interactive file browser (replaces
-    # the old free-typed path prompt — see file_browser.py).
-    if chosen_path is None:
-        browsed = file_browser.select_folder()
-        if browsed is None:
-            # User backed out of the browser without picking anything;
-            # fall back to the existing default rather than leaving the
-            # caller with no folder at all.
-            console.print("[yellow]  No folder selected — keeping the previous default.[/]")
-            chosen_path = cfg.last_download_folder or DEFAULT_FOLDER
-        else:
-            chosen_path = browsed
-
-    # Create the directory and persist the choice.
-    chosen_path.mkdir(parents=True, exist_ok=True)
-    cfg.last_download_folder = chosen_path
-    cfg.save()
-
-    console.print(
-        f"\n[green]✔  Saving to:[/] [cyan]{chosen_path}[/]\n"
-        f"   [dim](Change anytime via Settings → option 1)[/]\n"
-    )
-    return chosen_path
+# pick_folder is imported from download_ui.py
 
 
 # ===========================================================================
 # Quality picker
 # ===========================================================================
 
-_RESOLUTION_LABELS: dict[int, str] = {
-    2160: "2160p (4K)",
-    1440: "1440p (2K)",
-    1080: "1080p (Full HD)",
-    720: "720p (HD)",
-    480: "480p (SD)",
-    360: "360p",
-    240: "240p",
-    144: "144p",
-}
-
-
-def _pick_quality(url_for_probe: Optional[str] = None) -> Optional[str]:
-    """
-    Show the Download Quality step and return a quality string.
-
-    Returns
-    -------
-    str or None
-        ``None``       → use best available (no change to existing behaviour)
-        ``"1080p"``    → specific resolution string understood by Downloader
-    """
-    console.print()
-    console.print(Rule("[bold cyan]Download Quality[/]"))
-    console.print()
-
-    q_table = Table(box=box.SIMPLE, show_header=False, pad_edge=False)
-    q_table.add_column("  #", style="bold cyan", justify="right", min_width=3)
-    q_table.add_column("  Option", style="white")
-
-    q_table.add_row("1", "Best Available  [dim](Recommended)[/]")
-    q_table.add_row("2", "Choose Specific Quality")
-    console.print(q_table)
-    console.print()
-
-    while True:
-        choice = _prompt("Choose quality option [1–2]")
-        if choice in ("1", "2"):
-            break
-        console.print("[yellow]  Please enter 1 or 2.[/]")
-
-    if choice == "1":
-        console.print("[dim]  Using best available quality.[/]\n")
-        return None
-
-    # ---- Specific quality path ----
-    if url_for_probe is None:
-        console.print(
-            "[yellow]  Cannot fetch resolutions without a URL – "
-            "defaulting to best available.[/]\n"
-        )
-        return None
-
-    console.print("[dim]  Fetching available resolutions…[/]")
-    heights = Downloader.fetch_resolutions(url_for_probe)
-
-    if not heights:
-        console.print(
-            "[yellow]  Could not retrieve resolutions – "
-            "defaulting to best available.[/]\n"
-        )
-        return None
-
-    console.print()
-    res_table = Table(box=box.SIMPLE, show_header=False, pad_edge=False)
-    res_table.add_column("  #", style="bold cyan", justify="right", min_width=3)
-    res_table.add_column("  Resolution", style="white")
-
-    for i, h in enumerate(heights, start=1):
-        label = _RESOLUTION_LABELS.get(h, f"{h}p")
-        res_table.add_row(str(i), label)
-
-    console.print(res_table)
-    console.print()
-
-    n = len(heights)
-    while True:
-        raw = _prompt(f"Choose resolution [1–{n}]")
-        if raw.isdigit():
-            idx = int(raw) - 1
-            if 0 <= idx < n:
-                chosen_height = heights[idx]
-                chosen_label = _RESOLUTION_LABELS.get(chosen_height, f"{chosen_height}p")
-                console.print(f"[dim]  Selected: {chosen_label}[/]\n")
-                return f"{chosen_height}p"
-        console.print(f"[yellow]  Please enter a number between 1 and {n}.[/]")
+# _pick_quality is imported from download_ui.py as _pick_quality
 
 
 # ===========================================================================
@@ -731,120 +554,35 @@ def action_failed() -> None:
 
 def action_settings(cfg: AppConfig) -> None:
     """
-    Menu item 5 – Settings.
-
-    Sub-options:
-        1  Change download folder
-        2  Change default .txt file
-        3  Reset all settings
-        4  Back
+    Menu item 4 – Settings.
+    Delegates to settings.py.
     """
-    while True:
-        console.print()
-        console.print(Rule("[bold cyan]Settings[/]"))
-        console.print()
-
-        current_folder = cfg.last_download_folder or DEFAULT_FOLDER
-        current_links = cfg.last_links_file or LINKS_FILE
-
-        table = Table(box=box.SIMPLE, show_header=False, pad_edge=False)
-        table.add_column("  #", style="bold cyan", justify="right", min_width=3)
-        table.add_column("  Option", style="white")
-        table.add_column("  Current", style="dim")
-
-        table.add_row("1", "Change download folder", str(current_folder))
-        table.add_row("2", "Change default .txt file", str(current_links))
-        table.add_row("3", "Reset all settings to defaults", "")
-        table.add_row("4", "Back to main menu", "")
-
-        console.print(table)
-        console.print()
-
-        choice = _prompt("Choose option [1–4]")
-
-        if choice == "1":
-            # Per spec: Settings -> "Change download folder" launches the
-            # file browser directly (not the Last-Used/Movies/Downloads
-            # quick-pick menu used elsewhere).
-            folder = file_browser.select_folder(start=cfg.last_download_folder)
-            if folder is None:
-                console.print("[yellow]  No folder selected — keeping the current one.[/]")
-            else:
-                folder.mkdir(parents=True, exist_ok=True)
-                cfg.last_download_folder = folder
-                cfg.save()
-                console.print(f"[green]✔  Download folder updated to:[/] {folder}")
-
-        elif choice == "2":
-            # Per spec: Settings -> "Change default .txt file" launches the
-            # file browser directly, in .txt-file-selection mode.
-            current_default = cfg.last_links_file or LINKS_FILE
-            console.print(f"  Current default: [cyan]{current_default}[/]")
-            console.print()
-            start_dir = current_default.parent if current_default.exists() else None
-            new_path = file_browser.select_txt_file(start=start_dir)
-            if new_path is None:
-                console.print("[yellow]  No file selected — keeping the current default.[/]")
-            else:
-                cfg.last_links_file = new_path
-                cfg.save()
-                console.print(f"[green]✔  Default .txt file set to:[/] [cyan]{new_path}[/]")
-
-        elif choice == "3":
-            cfg.last_download_folder = None
-            cfg.last_links_file = None
-            cfg.ui_color = "cyan"
-            cfg.save()
-            console.print("[green]✔  All settings reset to defaults.[/]")
-
-        elif choice == "4":
-            break
-
-        else:
-            console.print("[yellow]  Enter 1, 2, 3, or 4.[/]")
+    settings_menu(cfg)
 
 
 def action_about() -> None:
     """
-    Menu item 6 – About.
+    Menu item 5 – About.
+    Delegates to about.py.
     """
-    console.print()
-    console.print(Rule("[bold cyan]About[/]"))
-    console.print()
-
-    lines = Text.assemble(
-        Text(f"{APP_NAME}\n", style="bold cyan"),
-        Text(f"Version {APP_VERSION}\n\n", style="dim"),
-        Text(f"By {APP_AUTHOR}\n\n", style="white"),
-        Text(f"{APP_DESCRIPTION}\n\n", style="dim"),
-        Text("Features\n", style="bold white"),
-        Text("  • Best-quality video + audio merged to MP4\n", style="dim"),
-        Text("  • Sequential automatic file numbering\n", style="dim"),
-        Text("  • Full metadata & history tracking\n", style="dim"),
-        Text("  • Playlist support\n", style="dim"),
-        Text("  • Retry on failure\n", style="dim"),
-        Text("  • Interactive menu + classic CLI sub-commands\n", style="dim"),
-    )
-
-    console.print(
-        Align.center(
-            Panel(
-                Align.center(lines),
-                border_style="cyan",
-                padding=(1, 6),
-            )
-        )
-    )
-
-    _pause()
+    about_menu()
 
 
 def action_channel_grabber(cfg: AppConfig) -> None:
     """
-    Menu item 7 – Channel Link Grabber.
+    Menu item 6 – Channel Link Grabber.
     Delegates entirely to channel_grabber.run().
     """
     from channel_grabber import run
+    run(cfg)
+
+
+def action_channel_downloader(cfg: AppConfig) -> None:
+    """
+    Menu item 7 – Channel Downloader.
+    Delegates entirely to channel_downloader.run().
+    """
+    from channel_downloader import run
     run(cfg)
 
 
@@ -887,7 +625,8 @@ def _build_menu_table(cfg: AppConfig) -> Table:
     table.add_row("4", "Settings")
     table.add_row("5", "About")
     table.add_row("6", "Channel Link Grabber")
-    table.add_row("7", "Exit")
+    table.add_row("7", "Channel Downloader")
+    table.add_row("8", "Exit")
 
     return table
 
@@ -910,7 +649,7 @@ def run_menu() -> None:
         console.print(Align.center(table))
         console.print()
 
-        raw = _prompt("Choose option [1–7]")
+        raw = _prompt("Choose option [1–8]")
 
         if raw == "1":
             action_single_video(cfg)
@@ -931,9 +670,12 @@ def run_menu() -> None:
             action_channel_grabber(cfg)
 
         elif raw == "7":
+            action_channel_downloader(cfg)
+
+        elif raw == "8":
             console.print("\n[bold cyan]Goodbye![/]\n")
             sys.exit(0)
 
         else:
-            console.print("[yellow]  Please enter a number between 1 and 7.[/]")
+            console.print("[yellow]  Please enter a number between 1 and 8.[/]")
             _pause()
